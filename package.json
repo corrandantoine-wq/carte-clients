@@ -3,7 +3,9 @@
   "private": true,
   "description": "Carte Clients : tests automatiques (l'appli elle-même n'a pas besoin de build).",
   "scripts": {
-    "test": "playwright test",
+    "test": "node --test tests/unit/*.test.mjs && playwright test",
+    "test:unit": "node --test tests/unit/*.test.mjs",
+    "test:e2e": "playwright test",
     "test:db": "bash tests/db/run.sh"
   },
   "devDependencies": {

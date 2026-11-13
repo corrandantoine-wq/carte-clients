@@ -1,8 +1,12 @@
 /* Carte Clients — base clients commune sur une carte, avec suivi de la position
  * en temps réel, comptes collaborateurs (Supabase), favoris personnels et
  * données HubSpot sur chaque fiche. */
+import { esc, num, hasPos, fullAddress, sleep, haversine, fmtDist, fmtEta, fmtDuration, initials, colorFor, norm, routeUrl, wazeUrl, telUrl } from './js/utils.js';
+import { I } from './js/icons.js';
+import { geocode, geocodeBatch, fetchRoute } from './js/geo.js';
+import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/importer.js';
+
 (() => {
-  'use strict';
 
   const LEGACY_KEY = 'carte-clients:v1';        // ancienne base stockée dans le téléphone
   const SETTINGS_KEY = 'carte-clients:settings';
@@ -34,41 +38,12 @@
   const cacheKey = () => `carte-clients:cache:${user?.id}`;
   const saveCache = () => store(cacheKey(), { clients, favorites: [...favorites] });
   const $ = s => document.querySelector(s);
-  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const num = v => { if (v === null || v === undefined || v === '') return null; const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : null; };
-  const hasPos = c => Number.isFinite(c.lat) && Number.isFinite(c.lng);
-  const fullAddress = c => [c.adresse, [c.code_postal, c.ville].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   const isDesktop = () => window.matchMedia('(min-width: 900px)').matches;
   const byId = id => clients.find(c => c.id === id);
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
   const canDelete = c => isAdmin || c.created_by === user?.id;
 
-  function haversine(a, b) {
-    const R = 6371, rad = Math.PI / 180;
-    const dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
-    const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
-    return 2 * R * Math.asin(Math.sqrt(h));
-  }
   const distTo = c => (me && hasPos(c) ? haversine(me, c) : null);
   const inRadius = d => d != null && settings.radius > 0 && d <= settings.radius;
-  function fmtDist(km) {
-    if (km == null) return '—';
-    return km < 1 ? `${Math.round(km * 100) * 10} m` : km < 10 ? `${km.toFixed(1).replace('.', ',')} km` : `${Math.round(km)} km`;
-  }
-  // Estimation grossière du temps en voiture (distance à vol d'oiseau × 1,3).
-  function fmtEta(km) {
-    const road = km * 1.3, speed = road < 5 ? 25 : road < 30 ? 50 : 80;
-    const min = Math.max(1, Math.round(road / speed * 60));
-    return min < 60 ? `${min} min` : `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')}`;
-  }
-
-  const STOP = new Set(['de', 'du', 'des', 'la', 'le', 'les', 'l', 'd', 'et', '&', 'à', 'au', 'aux', 'sarl', 'sas', 'eurl', 'sa']);
-  function initials(name) {
-    const words = String(name || '?').split(/[\s'’\-.@_]+/).filter(w => w && !STOP.has(w.toLowerCase()));
-    return ((words[0]?.[0] || '?') + (words[1]?.[0] || '')).toUpperCase();
-  }
-  const PALETTE = ['#2563eb', '#7c3aed', '#db2777', '#ea580c', '#16a34a', '#0891b2', '#4f46e5', '#b45309', '#0d9488', '#c026d3'];
-  function colorFor(s) { let h = 0; for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return PALETTE[h % PALETTE.length]; }
   const avatar = c => `<div class="avatar" style="background:${colorFor(c.nom)}">${esc(initials(c.nom))}</div>`;
 
   let toastTimer;
@@ -80,26 +55,6 @@
     b.onclick = action ? () => { t.hidden = true; action.run(); } : null;
     clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), action ? Math.max(ms, 6000) : ms);
   }
-
-  const I = {
-    route: '<svg viewBox="0 0 24 24"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>',
-    phone: '<svg viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></svg>',
-    mail: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>',
-    car: '<svg viewBox="0 0 24 24"><path d="M5 17h14M6 17v2M18 17v2M4 13l2-6h12l2 6v4H4z"/></svg>',
-    pin: '<svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>',
-    note: '<svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM9 9h6M9 13h6M9 17h3"/></svg>',
-    edit: '<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4"/></svg>',
-    trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
-    users: '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/></svg>',
-    search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>',
-    radar: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>',
-    ab: '<svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="6" r="2.5"/><path d="M8.5 18H15a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h6.5"/></svg>',
-    star: '<svg viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg>',
-    link: '<svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
-  };
-  const routeUrl = c => `https://www.google.com/maps/dir/?api=1&destination=${hasPos(c) ? `${c.lat},${c.lng}` : encodeURIComponent(fullAddress(c))}`;
-  const wazeUrl = c => hasPos(c) ? `https://waze.com/ul?ll=${c.lat},${c.lng}&navigate=yes` : `https://waze.com/ul?q=${encodeURIComponent(fullAddress(c))}&navigate=yes`;
-  const telUrl = c => `tel:${String(c.telephone).replace(/[^\d+]/g, '')}`;
 
   // ---------- Connexion à Supabase ----------
   const cfg = window.CARTE_CLIENTS_CONFIG || {};
@@ -601,7 +556,6 @@
 
   // ---------- Trajet A → B (temps de route) ----------
   // Service d'itinéraire de l'IGN (gratuit, sans clé, couvre la France). Temps estimé hors trafic.
-  const ROUTE_API = 'https://data.geopf.fr/navigation/itineraire';
   const route = { A: null, B: null, active: 'A', layer: L.layerGroup(), cache: new Map(), returnTo: null, seq: 0 };
   const routeView = $('#routeView');
   const inRoute = () => !routeView.hidden;
@@ -609,13 +563,6 @@
   // Un point du trajet : un client ({ id }) ou ma position ({ me: true }).
   const pointPos = pt => pt?.me ? (me ? { lat: me.lat, lng: me.lng } : null) : (pt && byId(pt.id) && hasPos(byId(pt.id)) ? byId(pt.id) : null);
   const pointLabel = pt => pt?.me ? 'Ma position' : (byId(pt?.id)?.nom || '');
-
-  function fmtDuration(min) {
-    min = Math.max(1, Math.round(min));
-    if (min < 60) return `${min} min`;
-    const h = Math.floor(min / 60), m = min % 60;
-    return m ? `${h} h ${String(m).padStart(2, '0')}` : `${h} h`;
-  }
 
   function openRoute(from = null) {
     route.returnTo = selectedId;
@@ -739,12 +686,7 @@
     let res = route.cache.get(key);
     try {
       if (!res) {
-        const url = `${ROUTE_API}?resource=bdtopo-osrm&profile=car&optimization=fastest&start=${a.lng},${a.lat}&end=${b.lng},${b.lat}` +
-          '&geometryFormat=geojson&getSteps=false&timeUnit=minute&distanceUnit=kilometer';
-        const r = await fetch(url);
-        if (!r.ok) throw new Error(`service indisponible (${r.status})`);
-        res = await r.json();
-        if (!Number.isFinite(res.duration) || !res.geometry?.coordinates?.length) throw new Error('aucun itinéraire trouvé');
+        res = await fetchRoute(a, b);
         route.cache.set(key, res);
       }
     } catch (e) {
@@ -907,57 +849,6 @@
   });
 
   // ---------- Géocodage ----------
-  // Service public de géocodage (IGN / Base Adresse Nationale) : https://data.geopf.fr/geocodage
-  const GEO = 'https://data.geopf.fr/geocodage';
-  const MIN_SCORE = 0.5;
-  // Le résultat est-il cohérent avec le code postal fourni (même département) ?
-  const sameDept = (cp, found) => !cp || !found || String(cp).slice(0, 2) === String(found).slice(0, 2);
-
-  async function geocode(address, cp = '') {
-    if (!address) return null;
-    try {
-      const r = await fetch(`${GEO}/search?q=${encodeURIComponent(address)}&limit=1`);
-      if (r.ok) {
-        const f = (await r.json()).features?.[0];
-        if (f && f.properties.score >= MIN_SCORE && sameDept(cp, f.properties.postcode)) return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] };
-      }
-    } catch {}
-    try { // Repli international : Nominatim (OpenStreetMap), 1 requête/seconde max
-      await sleep(1100);
-      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(address)}`, { headers: { 'Accept-Language': 'fr' } });
-      if (r.ok) { const j = await r.json(); if (j[0]) return { lat: +j[0].lat, lng: +j[0].lon }; }
-    } catch {}
-    return null;
-  }
-
-  // Géocodage par lot : jusqu'à 5 000 adresses par envoi (le service accepte 200 000 lignes / 50 Mo).
-  async function geocodeBatch(list, onProgress = () => {}, mainLineOnly = false) {
-    const found = new Map();
-    const CHUNK = 5000;
-    for (let i = 0; i < list.length; i += CHUNK) {
-      const part = list.slice(i, i + CHUNK);
-      const line = a => (mainLineOnly ? String(a || '').split(',')[0] : a || '');
-      const csv = Papa.unparse(part.map(c => ({ id: c.id, adresse: line(c.adresse), code_postal: c.code_postal || '', ville: c.ville || '' })));
-      const fd = new FormData();
-      fd.append('data', new Blob([csv], { type: 'text/csv' }), 'adresses.csv');
-      for (const col of ['adresse', 'code_postal', 'ville']) fd.append('columns', col);
-      fd.append('postcode', 'code_postal');
-      let text = '';
-      for (let attempt = 0; attempt < 3 && !text; attempt++) {
-        try { const r = await fetch(`${GEO}/search/csv`, { method: 'POST', body: fd }); if (r.ok) text = await r.text(); else await sleep(1500); }
-        catch { await sleep(1500); }
-      }
-      if (text) {
-        for (const r of Papa.parse(text, { header: true, skipEmptyLines: true }).data) {
-          const lat = num(r.latitude), lng = num(r.longitude), score = num(r.result_score);
-          if (lat != null && lng != null && score >= MIN_SCORE && sameDept(r.code_postal, r.result_postcode)) found.set(r.id, { lat, lng });
-        }
-      }
-      onProgress(Math.min(i + CHUNK, list.length), list.length);
-    }
-    return found;
-  }
-
   // Enregistre les coordonnées en base par paquets de 1 000.
   async function saveCoords(found) {
     const items = [...found].map(([id, p]) => ({ id, lat: p.lat, lng: p.lng }));
@@ -995,61 +886,7 @@
   }
 
   // ---------- Import (ERP, CSV, Excel) ----------
-  // Champs de l'appli et noms de colonnes habituels (ERP français et internationaux).
-  const FIELDS = [
-    { key: 'nom', label: 'Nom / raison sociale', req: true, alias: ['nom', 'name', 'raison sociale', 'raison_sociale', 'nom client', 'nom du client', 'client', 'societe', 'société', 'entreprise', 'company', 'company name', 'enseigne', 'intitule', 'intitulé', 'intitule tiers', 'libelle', 'libellé', 'libelle tiers', 'denomination', 'dénomination', 'name 1', 'name1', 'customer name', 'nom raison sociale', 'designation', 'désignation'] },
-    { key: 'code_client', label: 'Code client', key2: true, alias: ['code client', 'code_client', 'n client', 'no client', 'numero client', 'num client', 'numéro client', 'ref client', 'reference client', 'référence client', 'code tiers', 'n compte tiers', 'compte tiers', 'numero de compte', 'n compte', 'compte', 'code', 'id client', 'client id', 'customer', 'customer number', 'customer id', 'internal reference', 'reference', 'référence', 'ref', 'numero', 'numéro', 'matricule', 'identifiant'] },
-    { key: 'adresse', label: 'Adresse', alias: ['adresse', 'adresse 1', 'adresse1', 'adresse ligne 1', 'adresse postale', 'adresse de facturation', 'adresse facturation', 'address', 'address 1', 'address line 1', 'street', 'rue', 'voie', 'billing street'] },
-    { key: 'adresse2', label: 'Complément d’adresse', alias: ['adresse 2', 'adresse2', 'adresse ligne 2', 'complement', 'complément', 'complement adresse', 'complément d adresse', 'complement d adresse', 'street2', 'address 2', 'address line 2'] },
-    { key: 'code_postal', label: 'Code postal', alias: ['code postal', 'code_postal', 'codepostal', 'cp', 'zip', 'zip code', 'postcode', 'postal code', 'postal_code', 'code postal facturation'] },
-    { key: 'ville', label: 'Ville', alias: ['ville', 'city', 'commune', 'localite', 'localité', 'ville facturation', 'bureau distributeur'] },
-    { key: 'telephone', label: 'Téléphone', alias: ['telephone', 'téléphone', 'tel', 'tél', 'telephone 1', 'tel 1', 'téléphone fixe', 'telephone fixe', 'phone', 'phone number', 'mobile', 'portable', 'gsm', 'standard'] },
-    { key: 'email', label: 'E-mail', alias: ['email', 'e mail', 'mail', 'courriel', 'adresse e mail', 'adresse mail', 'email address'] },
-    { key: 'notes', label: 'Notes', alias: ['notes', 'note', 'commentaire', 'commentaires', 'remarques', 'remarque', 'comment', 'observations', 'observation'] },
-    { key: 'lat', label: 'Latitude', alias: ['latitude', 'lat', 'y', 'gps latitude'] },
-    { key: 'lng', label: 'Longitude', alias: ['longitude', 'lng', 'lon', 'long', 'x', 'gps longitude'] },
-    { key: 'hubspot_id', label: 'ID HubSpot', alias: ['hubspot id', 'hubspot_id', 'id hubspot', 'record id', 'company id', 'id de fiche d informations'] },
-    { key: 'prenom', label: 'Prénom (si clients particuliers)', alias: ['prenom', 'prénom', 'firstname', 'first name'] },
-  ];
-  // Normalise un nom de colonne : minuscules, sans accents ni ponctuation.
-  const norm = s => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
   const MAPPING_KEY = 'carte-clients:mapping';
-
-  function guessMapping(headers) {
-    const saved = load(MAPPING_KEY, {})[headers.map(norm).join('|')];
-    if (saved) return saved;
-    const used = new Set(), out = {};
-    // Les correspondances exactes d'abord, champ par champ, dans l'ordre de la liste d'alias.
-    for (const f of FIELDS) {
-      for (const a of f.alias.map(norm)) {
-        const i = headers.findIndex((h, j) => !used.has(j) && norm(h) === a);
-        if (i >= 0) { out[f.key] = i; used.add(i); break; }
-      }
-    }
-    return out;
-  }
-
-  // Lit le fichier : Excel (.xlsx/.xls) ou texte (CSV) en UTF-8 ou en encodage Windows.
-  async function readTable(file) {
-    if (/\.xlsx?$/i.test(file.name)) {
-      if (!window.XLSX) await new Promise((ok, ko) => {
-        const s = Object.assign(document.createElement('script'), { src: 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js', onload: ok, onerror: ko });
-        document.head.appendChild(s);
-      });
-      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      return { rows: XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '', blankrows: false }), encoding: `Excel, feuille « ${wb.SheetNames[0]} »` };
-    }
-    const buf = await file.arrayBuffer();
-    let text, encoding = 'UTF-8';
-    try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
-    catch { text = new TextDecoder('windows-1252').decode(buf); encoding = 'Windows (accents convertis)'; }
-    return { rows: Papa.parse(text, { skipEmptyLines: 'greedy' }).data, encoding };
-  }
-
-  // Corrige les pertes habituelles d'Excel : zéros de tête des codes postaux et des téléphones.
-  function fixCp(v) { v = String(v ?? '').trim(); return /^\d{4}$/.test(v) ? '0' + v : v; }
-  function fixTel(v) { v = String(v ?? '').trim(); return /^[1-9]\d{8}$/.test(v) ? '0' + v : v; }
 
   const imp = { headers: [], data: [], mapping: {}, file: '' };
   // « 1 client ajouté », « 2 clients ajoutés »
@@ -1064,7 +901,7 @@
     const seen = {};
     imp.headers = rows[0].map((h, i) => { h = String(h ?? '').trim() || `Colonne ${i + 1}`; seen[h] = (seen[h] || 0) + 1; return seen[h] > 1 ? `${h} (${seen[h]})` : h; });
     imp.data = rows.slice(1);
-    imp.mapping = guessMapping(imp.headers);
+    imp.mapping = guessMapping(imp.headers, load(MAPPING_KEY, {}));
     imp.file = file.name;
     $('#impFileInfo').textContent = `${file.name} · ${imp.data.length.toLocaleString('fr-FR')} lignes · ${imp.headers.length} colonnes · ${table.encoding}`;
     $('#impMap').hidden = false; $('#impRun').hidden = true;
@@ -1090,40 +927,6 @@
     renderPreview();
   });
 
-  // Transforme une ligne du fichier en client, avec uniquement les champs choisis.
-  function rowToClient(r) {
-    const m = imp.mapping, get = k => (m[k] != null ? String(r[m[k]] ?? '').trim() : '');
-    const c = {};
-    const nom = [get('prenom'), get('nom')].filter(Boolean).join(' ');
-    c.nom = nom || get('adresse');
-    if (m.code_client != null) c.code_client = get('code_client') || null;
-    if (m.adresse != null || m.adresse2 != null) c.adresse = [get('adresse'), get('adresse2')].filter(Boolean).join(', ');
-    if (m.code_postal != null) c.code_postal = fixCp(get('code_postal'));
-    if (m.ville != null) c.ville = get('ville');
-    if (m.telephone != null) c.telephone = fixTel(get('telephone'));
-    if (m.email != null) c.email = get('email');
-    if (m.notes != null) c.notes = get('notes');
-    if (m.lat != null && m.lng != null) { c.lat = num(get('lat')); c.lng = num(get('lng')); }
-    if (m.hubspot_id != null) c.hubspot_id = /^\d+$/.test(get('hubspot_id')) ? get('hubspot_id') : null;
-    return c;
-  }
-
-  // Prépare l'import : dédoublonne par code client et sépare nouveaux / mis à jour / sans code.
-  function planImport() {
-    const byCode = new Map(clients.filter(c => c.code_client).map(c => [c.code_client, c]));
-    const inFile = new Map(), noCode = [];
-    let skipped = 0;
-    for (const r of imp.data) {
-      const c = rowToClient(r);
-      if (!c.nom) { skipped++; continue; }
-      if (c.code_client) { if (!inFile.has(c.code_client)) inFile.set(c.code_client, c); } // doublon : on garde la 1re ligne
-      else noCode.push(c);
-    }
-    const updates = [], creates = [];
-    for (const [code, c] of inFile) (byCode.has(code) ? updates : creates).push(c);
-    return { byCode, updates, creates, noCode, skipped, dupInFile: imp.data.length - skipped - noCode.length - inFile.size };
-  }
-
   function renderPreview() {
     const shown = FIELDS.filter(f => imp.mapping[f.key] != null);
     $('#impPreview').innerHTML = !shown.length ? '<tr><td>Aucune colonne choisie.</td></tr>' :
@@ -1135,7 +938,7 @@
       $('#impGo').disabled = true; return;
     }
     $('#impGo').disabled = false;
-    const p = planImport(), parts = [];
+    const p = planImport(imp.data, imp.mapping, clients), parts = [];
     if (p.creates.length + p.noCode.length) parts.push(`<b>${pl(p.creates.length + p.noCode.length, 'nouveau client', 'nouveaux clients')}</b>`);
     if (p.updates.length) parts.push(`<b>${pl(p.updates.length, 'client déjà présent mis à jour', 'clients déjà présents mis à jour')}</b> (même code client)`);
     if (p.dupInFile > 0) parts.push(pl(p.dupInFile, 'ligne en double dans le fichier ignorée', 'lignes en double dans le fichier ignorées'));
@@ -1153,10 +956,10 @@
   const impBar = pct => { $('#impBar').style.width = Math.round(pct) + '%'; };
 
   $('#impGo').addEventListener('click', async () => {
-    const p = planImport(), total = p.updates.length + p.creates.length + p.noCode.length;
+    const p = planImport(imp.data, imp.mapping, clients), total = p.updates.length + p.creates.length + p.noCode.length;
     if (!total) return toast('Aucune ligne à importer.');
     // Mémorise la correspondance des colonnes pour le prochain import du même format.
-    const maps = load(MAPPING_KEY, {}); maps[imp.headers.map(norm).join('|')] = imp.mapping; store(MAPPING_KEY, maps);
+    const maps = load(MAPPING_KEY, {}); maps[mappingKey(imp.headers)] = imp.mapping; store(MAPPING_KEY, maps);
 
     $('#impMap').hidden = true; $('#impRun').hidden = false; $('#impGo').hidden = true; $('#impCancel').textContent = 'Fermer';
     $('#impResult').textContent = '';

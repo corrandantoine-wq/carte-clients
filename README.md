@@ -17,7 +17,12 @@ Web app (installable sur mobile) qui affiche la **base clients commune de l'équ
 ## Architecture
 | Élément | Rôle |
 |---|---|
-| `index.html`, `app.js`, `style.css` | L'appli (statique, hébergée sur GitHub Pages). Fonds de carte : plan et photos aériennes de l'IGN (Géoplateforme), gratuits et sans clé |
+| `index.html`, `style.css` | Structure et apparence de l'appli (statique, hébergée sur GitHub Pages) |
+| `app.js` | Interface : carte, liste, fiche, comptes, import, trajet, administration |
+| `js/utils.js` | Fonctions utilitaires (distances, formats, initiales, liens) |
+| `js/geo.js` | Services IGN : géocodage des adresses (unitaire et par lot), itinéraires |
+| `js/importer.js` | Import ERP : lecture CSV ou Excel, reconnaissance des colonnes, préparation |
+| `js/icons.js` | Icônes |
 | `config.js` | Adresse du projet Supabase et clé publique « anon » |
 | `supabase/migrations/` | Tables, règles de sécurité, temps réel, import ERP |
 | `supabase/functions/hubspot/` | Passerelle sécurisée vers HubSpot (le jeton HubSpot reste sur le serveur) |
@@ -94,6 +99,10 @@ Exemple : `exemple-clients.csv`. Limite du géocodage : 200 000 lignes par fichi
 ## Tests automatiques
 Ils sont lancés automatiquement sur GitHub à chaque modification (onglet **Actions**, workflow « Carte Clients – tests »).
 
+- **Unitaires** : 14 tests des modules `js/` (en moins d'une seconde).
+  ```bash
+  cd carte-clients && npm run test:unit
+  ```
 - **Interface** : 25 scénarios, rejoués sur mobile et sur ordinateur. Ils couvrent la connexion, l'accès refusé, l'import ERP (CSV et Excel), le ré-import sans doublon, les favoris, le rayon, la recherche, le trajet A → B, la corbeille, l'historique, HubSpot et l'administration. La base de données et les services externes sont simulés.
   ```bash
   cd carte-clients && npm ci && npx playwright install chromium && npx playwright test
