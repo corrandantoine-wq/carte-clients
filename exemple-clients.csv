@@ -1,0 +1,11 @@
+nom;adresse;code_postal;ville;telephone;email;notes;latitude;longitude
+Boulangerie Dupont;12 rue de Rivoli;75004;Paris;0142000001;contact@dupont.fr;Client depuis 2019;48.8556;2.3580
+Garage Martin;45 avenue Jean Jaurès;69007;Lyon;0478000002;garage.martin@mail.fr;;45.7480;4.8420
+Pharmacie du Port;3 quai du Port;13002;Marseille;0491000003;;Livraison le mardi;43.2965;5.3698
+Fleurs & Co;8 place du Capitole;31000;Toulouse;0561000004;fleursco@mail.fr;;43.6045;1.4440
+Café Central;20 cours de l'Intendance;33000;Bordeaux;0556000005;;VIP;44.8420;-0.5760
+Librairie Nantaise;5 rue Crébillon;44000;Nantes;0240000006;librairie@nantes.fr;;47.2130;-1.5600
+Restaurant Le Lys;1 Grand Place;59000;Lille;0320000007;;;50.6370;3.0635
+Atelier Strasbourgeois;10 place Kléber;67000;Strasbourg;0388000008;atelier@stras.fr;;48.5834;7.7458
+Mairie de Versailles;4 avenue de Paris;78000;Versailles;0130000009;;Adresse à géocoder;;
+Cave à vins Rennaise;Place des Lices;35000;Rennes;0299000010;;Adresse à géocoder;;

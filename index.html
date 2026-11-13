@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1d4ed8">
+  <title>Carte Clients</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">📍 Carte Clients</div>
+    <input id="search" type="search" placeholder="Rechercher un client, une ville…" autocomplete="off">
+    <button id="menuBtn" class="icon-btn" aria-label="Menu">☰</button>
+  </header>
+
+  <div id="menu" class="menu" hidden>
+    <button data-action="add">➕ Ajouter un client</button>
+    <label class="file-btn">📥 Importer un fichier CSV<input id="csvInput" type="file" accept=".csv,text/csv,text/plain" hidden></label>
+    <button data-action="sample">🧪 Charger des clients d'exemple</button>
+    <button data-action="geocode">🌍 Géocoder les adresses manquantes</button>
+    <button data-action="export">📤 Exporter en CSV</button>
+    <button data-action="clear" class="danger">🗑️ Vider la base</button>
+  </div>
+
+  <main id="map"></main>
+
+  <div class="map-controls">
+    <button id="locateBtn" class="fab" title="Suivre ma position">◎</button>
+  </div>
+
+  <section id="panel" class="panel">
+    <div class="panel-handle" id="panelHandle"><span></span></div>
+    <div class="panel-head">
+      <div>
+        <strong id="countLabel">0 client</strong>
+        <div id="gpsStatus" class="muted">Position : en attente…</div>
+      </div>
+      <label class="radius">
+        Rayon <output id="radiusOut">10 km</output>
+        <input id="radius" type="range" min="1" max="200" step="1" value="10">
+      </label>
+    </div>
+    <label class="toggle"><input type="checkbox" id="onlyRadius" checked> Uniquement les clients dans le rayon</label>
+    <ul id="list" class="list"></ul>
+  </section>
+
+  <dialog id="clientDialog">
+    <form method="dialog" id="clientForm">
+      <h2 id="dialogTitle">Nouveau client</h2>
+      <input type="hidden" name="id">
+      <label>Nom *<input name="nom" required></label>
+      <label>Adresse<input name="adresse"></label>
+      <div class="row">
+        <label>Code postal<input name="code_postal" inputmode="numeric"></label>
+        <label>Ville<input name="ville"></label>
+      </div>
+      <div class="row">
+        <label>Téléphone<input name="telephone" type="tel"></label>
+        <label>E-mail<input name="email" type="email"></label>
+      </div>
+      <label>Notes<textarea name="notes" rows="2"></textarea></label>
+      <div class="row">
+        <label>Latitude<input name="latitude" inputmode="decimal"></label>
+        <label>Longitude<input name="longitude" inputmode="decimal"></label>
+      </div>
+      <p class="muted small">Laissez latitude/longitude vides pour géocoder l'adresse automatiquement, ou utilisez « Ma position ».</p>
+      <div class="dialog-actions">
+        <button type="button" id="useMyPos">📍 Ma position</button>
+        <span class="spacer"></span>
+        <button value="cancel" formnovalidate>Annuler</button>
+        <button value="save" class="primary">Enregistrer</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
