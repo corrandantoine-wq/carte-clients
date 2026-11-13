@@ -1,0 +1,92 @@
+# Sauvegarde quotidienne de la base Supabase, chiffrée, conservée 30 jours.
+# Garde aussi la base active (l'offre gratuite de Supabase la met en pause après 7 jours sans activité).
+#
+# À configurer une fois (Settings → Secrets and variables → Actions → New repository secret) :
+#   SUPABASE_DB_URL   : chaîne de connexion « Session pooler » de Supabase, avec le mot de passe de la base
+#   BACKUP_PASSPHRASE : phrase secrète de chiffrement — à conserver aussi ailleurs (gestionnaire de mots de passe) :
+#                       sans elle, les sauvegardes sont illisibles.
+name: Sauvegarde quotidienne
+
+on:
+  schedule:
+    - cron: '23 2 * * *'   # tous les jours vers 3 h 23 (heure de Paris en hiver)
+  workflow_dispatch:       # bouton « Run workflow » pour une sauvegarde immédiate
+
+permissions:
+  contents: read
+  actions: write           # pour réactiver ce workflow (GitHub coupe les tâches planifiées après 60 jours sans activité)
+
+jobs:
+  sauvegarde:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Garder la base active
+        run: |
+          URL=$(sed -n "s/.*supabaseUrl: '\(.*\)',/\1/p" config.js)
+          KEY=$(sed -n "s/.*supabaseAnonKey: '\(.*\)',/\1/p" config.js)
+          curl -fsS "$URL/rest/v1/crm_fields?select=property&limit=1" -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -o /dev/null
+          echo "Base Supabase active."
+
+      - name: Vérifier la configuration
+        id: cfg
+        env:
+          DB: ${{ secrets.SUPABASE_DB_URL }}
+          PASS: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          if [ -z "$DB" ] || [ -z "$PASS" ]; then
+            echo "::warning title=Sauvegarde non configurée::Ajoutez les secrets SUPABASE_DB_URL et BACKUP_PASSPHRASE (voir le README, section Sauvegardes)."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Installer les outils PostgreSQL 17
+        if: steps.cfg.outputs.ok == 'true'
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-17 > /dev/null
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      - name: Sauvegarder, chiffrer et vérifier
+        if: steps.cfg.outputs.ok == 'true'
+        env:
+          DB: ${{ secrets.SUPABASE_DB_URL }}
+          PASS: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          NAME="sauvegarde-$(date -u +%Y-%m-%d)"
+          echo "NAME=$NAME" >> "$GITHUB_ENV"
+          mkdir -p "$NAME"
+          # Données de l'appli (tables, règles d'accès, fonctions, historique).
+          pg_dump "$DB" --schema=public --no-owner --no-privileges --format=custom --file="$NAME/appli.dump"
+          # Comptes des collaborateurs (utile seulement si le projet Supabase devait être recréé).
+          pg_dump "$DB" --data-only --table=auth.users --table=auth.identities --format=custom --file="$NAME/comptes.dump" \
+            || { echo "::warning::Comptes non sauvegardés (droits insuffisants) : les données de l'appli le sont."; rm -f "$NAME/comptes.dump"; }
+          psql "$DB" -tAc "select 'clients : ' || count(*) from public.clients" | tee "$NAME/resume.txt"
+          tar czf - "$NAME" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 3 3<<<"$PASS" \
+            --symmetric --cipher-algo AES256 -o "$NAME.tar.gz.gpg"
+          # Contrôle : l'archive se déchiffre et la sauvegarde est lisible.
+          gpg --batch --pinentry-mode loopback --passphrase-fd 3 3<<<"$PASS" -d "$NAME.tar.gz.gpg" | tar tzf - > /dev/null
+          pg_restore --list "$NAME/appli.dump" | grep -c "TABLE DATA" | xargs -I{} echo "Tables sauvegardées : {}"
+          rm -rf "$NAME"
+          ls -lh "$NAME.tar.gz.gpg"
+
+      - name: Conserver la sauvegarde (30 jours)
+        if: steps.cfg.outputs.ok == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: ${{ env.NAME }}.tar.gz.gpg
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Garder la tâche planifiée active
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/sauvegarde.yml/enable" || true

@@ -83,6 +83,25 @@ La clé « anon » est faite pour être publique. Ne mettez **jamais** la clé *
 3. Menu ☰ → **Collaborateurs** : ajoutez l'adresse de chaque collègue. Chacun crée ensuite son compte avec cette adresse.
 4. Menu ☰ → **Champs HubSpot affichés** : cochez les informations du CRM à montrer sur les fiches.
 
+## Sauvegardes
+Chaque nuit, GitHub sauvegarde la base Supabase (workflow « Sauvegarde quotidienne »). Les données de l'appli et les comptes des collaborateurs sont **chiffrés** et conservés **30 jours** (onglet **Actions** → une exécution → **Artifacts**). La même tâche garde la base active : l'offre gratuite de Supabase la met en pause après 7 jours sans activité.
+
+### Mise en route (une fois)
+1. **Mot de passe de la base** : dans Supabase, **Project Settings → Database → Reset database password**, puis copiez-le.
+2. **Chaîne de connexion** : bouton **Connect** de Supabase → **Session pooler**. Elle ressemble à
+   `postgresql://postgres.nyxiwbbbuxxrhegwgkiz:[YOUR-PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:5432/postgres`.
+   Remplacez `[YOUR-PASSWORD]` par le mot de passe.
+3. Dans GitHub, **Settings → Secrets and variables → Actions → New repository secret**, créez :
+   - `SUPABASE_DB_URL` : la chaîne de connexion complète ;
+   - `BACKUP_PASSPHRASE` : une longue phrase secrète de votre choix. **Gardez-la aussi ailleurs** (gestionnaire de mots de passe) : sans elle, les sauvegardes sont illisibles.
+4. **Actions → Sauvegarde quotidienne → Run workflow** pour une première sauvegarde immédiate.
+
+### Restaurer
+```bash
+bash outils/restaurer.sh sauvegarde-AAAA-MM-JJ.tar.gz.gpg "CHAÎNE_DE_CONNEXION"
+```
+Le script demande la phrase secrète, affiche le contenu, puis demande confirmation avant de **remplacer** les données de l'appli. Si le projet Supabase a été recréé, il restaure aussi les comptes. Il nécessite PostgreSQL 17 et `gpg`. Ce scénario est vérifié par les tests automatiques (`tests/db/sauvegarde.sh`).
+
 ## Importer la base clients (ERP, CSV, Excel)
 Menu ☰ → **Importer un fichier**. Formats acceptés :
 - **CSV**, séparé par `;` ou `,`. L'encodage UTF-8 ou Windows est détecté automatiquement.
