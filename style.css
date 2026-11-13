@@ -385,3 +385,44 @@ dialog[open] { animation: up .25s cubic-bezier(.2,.8,.2,1); }
 .panel-dlg .dlg-body { overflow-y: auto; overscroll-behavior: contain; padding-bottom: 0; }
 .panel-dlg .dialog-actions { position: sticky; bottom: 0; background: var(--surface); padding: 12px 0 calc(16px + var(--safe-bottom)); margin-top: 0; z-index: 1; }
 .imp-section + .hint { margin-top: -6px; }
+
+/* ===== Trajet A → B ===== */
+.head-actions { display: flex; align-items: center; gap: 12px; flex: none; }
+.head-actions .gps-dot { margin-top: 0; }
+#routeBtn { background: var(--accent-soft); color: var(--accent); }
+.route-title { margin: 0; font-size: 18px; font-weight: 700; align-self: center; padding-left: 10px; }
+.route-body { overflow-y: auto; flex: 1; padding: 10px 16px 20px; overscroll-behavior: contain; }
+.route-form { position: relative; display: flex; flex-direction: column; gap: 8px; padding-right: 52px; }
+.rf-line { position: absolute; left: 15px; top: 30px; bottom: 30px; border-left: 2px dotted var(--ink-3); }
+.rf-row { position: relative; display: flex; align-items: center; gap: 10px; }
+.rf-dot { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; flex: none; color: #fff; font-weight: 800; font-size: 13px; z-index: 1; }
+.rf-dot.a { background: var(--ok); }
+.rf-dot.b { background: var(--near); }
+.rf-row input { flex: 1; min-width: 0; height: 46px; padding: 0 38px 0 14px; border-radius: 12px; border: 1.5px solid transparent; background: var(--surface-2); color: var(--ink); font: inherit; font-size: 16px; outline: 0; }
+.rf-row input:focus { border-color: var(--accent); background: var(--surface); }
+.rf-row input.filled { font-weight: 600; }
+.rf-clear { position: absolute; right: 8px; width: 28px; height: 28px; border-radius: 50%; color: var(--ink-3); font-size: 20px; line-height: 1; }
+.rf-swap { position: absolute; right: 0; top: 50%; transform: translateY(-50%); width: 40px; height: 40px; border-radius: 50%; background: var(--surface-2); color: var(--ink-2); display: grid; place-items: center; }
+.rf-swap svg { width: 20px; height: 20px; }
+.route-hint { margin: 10px 2px 0; }
+.route-suggest { max-height: none; min-height: 0; margin-top: 4px; }
+.route-suggest:empty { display: none; }
+.route-suggest li { cursor: pointer; border-radius: 12px; padding: 10px 8px; }
+.route-suggest li:hover, .route-suggest li.kbd { background: var(--surface-2); }
+.route-suggest .avatar { width: 36px; height: 36px; font-size: 13px; }
+.route-suggest .me-ico { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: #e3edff; color: #1a73ff; flex: none; }
+.route-suggest .d { font-size: 13px; color: var(--ink-2); flex: none; }
+.r-card { margin-top: 14px; border-radius: 18px; background: var(--surface-2); padding: 16px; }
+.r-main { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.r-time { font-size: 34px; font-weight: 800; letter-spacing: -.03em; color: var(--ok); line-height: 1; }
+.r-dist { font-size: 17px; font-weight: 600; color: var(--ink-2); }
+.r-sub { margin-top: 8px; color: var(--ink-2); font-size: 14px; }
+.r-note { margin-top: 10px; font-size: 12.5px; color: var(--ink-3); }
+.r-warn { margin-top: 10px; font-size: 13px; padding: 8px 10px; border-radius: 10px; background: #fff4db; color: #7a4a00; }
+@media (prefers-color-scheme: dark) { .r-warn { background: #3b2a08; color: #fcd57a; } }
+.r-actions { display: flex; gap: 10px; margin-top: 14px; }
+.r-actions .btn { flex: 1; text-decoration: none; }
+.r-loading { margin-top: 14px; }
+.route-pin { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 14px; border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,.35); }
+.route-pin.a { background: var(--ok); }
+.route-pin.b { background: var(--near); }

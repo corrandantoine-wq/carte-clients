@@ -7,6 +7,7 @@ Web app (installable sur mobile) qui affiche la **base clients commune de l'équ
 - **Base clients commune** : tout le monde voit les mêmes clients. Les ajouts des collègues apparaissent en direct.
 - **Favoris personnels** : chacun marque ses clients d'une étoile et peut n'afficher que ses favoris.
 - **HubSpot** : chaque client peut être relié à sa fiche HubSpot. La fiche affiche alors des champs du CRM, choisis par l'administrateur, avec un lien « Ouvrir dans HubSpot ».
+- **Temps de trajet A → B** entre deux clients, ou depuis sa position : durée, distance, heure d'arrivée et tracé sur la carte. Calcul par le service d'itinéraire de l'IGN, temps hors trafic.
 - **Position en direct**, choix du rayon (1 à 100 km), liste triée par distance, itinéraire Google Maps ou Waze, appel, e-mail.
 - **Import depuis un ERP** (CSV ou Excel) avec correspondance des colonnes, mise à jour par code client et géocodage par lot. Export CSV.
 - **Administration** (menu ☰) : gérer les collaborateurs, choisir les champs HubSpot affichés, vider la base.

@@ -1,6 +1,6 @@
 // Service worker : met en cache l'interface pour un démarrage rapide.
 // Les données (Supabase, HubSpot, géocodage) ne sont jamais mises en cache ici.
-const CACHE = 'carte-clients-v5';
+const CACHE = 'carte-clients-v6';
 const SHELL = ['./', './index.html', './style.css', './app.js', './config.js', './manifest.webmanifest', './icon.svg'];
 const STATIC_HOSTS = /tile\.openstreetmap\.org|arcgisonline|unpkg\.com|cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|fonts\.(googleapis|gstatic)\.com/;
 

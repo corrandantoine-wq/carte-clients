@@ -89,6 +89,7 @@
     users: '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/></svg>',
     search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>',
     radar: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>',
+    ab: '<svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="6" r="2.5"/><path d="M8.5 18H15a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h6.5"/></svg>',
     star: '<svg viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg>',
     link: '<svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
   };
@@ -174,7 +175,7 @@
       if (!visibleOnMap(c)) continue;
       const st = stateOf(c);
       const m = L.marker([c.lat, c.lng], { icon: pinIcon(c, st, favorites.has(c.id)), title: c.nom, near: st !== 'far', riseOnHover: true });
-      m.on('click', () => select(c.id));
+      m.on('click', () => onPinClick(c.id));
       markers.set(c.id, m); layers.push(m);
     }
     cluster.addLayers(layers);
@@ -375,6 +376,7 @@
       <div class="d-actions">
         <a class="act primary" href="${esc(routeUrl(c))}" target="_blank" rel="noopener">${I.route}Itinéraire</a>
         <a class="act${c.telephone ? '' : ' disabled'}" href="${c.telephone ? esc(telUrl(c)) : '#'}">${I.phone}Appeler</a>
+        <button class="act${hasPos(c) ? '' : ' disabled'}" data-act="route">${I.ab}Trajet</button>
         <a class="act" href="${esc(wazeUrl(c))}" target="_blank" rel="noopener">${I.car}Waze</a>
         <a class="act${c.email ? '' : ' disabled'}" href="${c.email ? `mailto:${esc(c.email)}` : '#'}">${I.mail}E-mail</a>
       </div>
@@ -414,7 +416,7 @@
   }
   $('#backBtn').addEventListener('click', closeDetail);
   $('#closeBtn').addEventListener('click', () => { closeDetail(); if (!isDesktop()) setSnap('peek'); });
-  map.on('click', () => { if (selectedId) closeDetail(); });
+  map.on('click', () => { if (selectedId && !inRoute()) closeDetail(); });
 
   $('#detail').addEventListener('click', async e => {
     const act = e.target.closest('[data-act]')?.dataset.act;
@@ -426,6 +428,7 @@
       clients = clients.filter(x => x.id !== c.id); favorites.delete(c.id);
       closeDetail(); scheduleFullRender(); toast('Client supprimé');
     }
+    if (act === 'route') openRoute({ id: c.id });
     if (act === 'hs-link') openHubspotLink(c);
     if (act === 'hs-unlink' && confirm('Retirer le lien avec la fiche HubSpot ?')) {
       await updateClient(c.id, { hubspot_id: null }); renderDetail();
@@ -516,6 +519,177 @@
     hsDlg.close(); toast('Client relié à HubSpot');
     if (selectedId === hsTarget) renderDetail();
   });
+
+  // ---------- Trajet A → B (temps de route) ----------
+  // Service d'itinéraire de l'IGN (gratuit, sans clé, couvre la France). Temps estimé hors trafic.
+  const ROUTE_API = 'https://data.geopf.fr/navigation/itineraire';
+  const route = { A: null, B: null, active: 'A', layer: L.layerGroup(), cache: new Map(), returnTo: null, seq: 0 };
+  const routeView = $('#routeView');
+  const inRoute = () => !routeView.hidden;
+
+  // Un point du trajet : un client ({ id }) ou ma position ({ me: true }).
+  const pointPos = pt => pt?.me ? (me ? { lat: me.lat, lng: me.lng } : null) : (pt && byId(pt.id) && hasPos(byId(pt.id)) ? byId(pt.id) : null);
+  const pointLabel = pt => pt?.me ? 'Ma position' : (byId(pt?.id)?.nom || '');
+
+  function fmtDuration(min) {
+    min = Math.max(1, Math.round(min));
+    if (min < 60) return `${min} min`;
+    const h = Math.floor(min / 60), m = min % 60;
+    return m ? `${h} h ${String(m).padStart(2, '0')}` : `${h} h`;
+  }
+
+  function openRoute(from = null) {
+    route.returnTo = selectedId;
+    if (selectedId) { selectedId = null; updateMarkerStates(); }
+    $('#listView').hidden = true; $('#detailView').hidden = true; routeView.hidden = false;
+    if (from) route.A = from;
+    if (!isDesktop() && sheetSnap === 'peek') setSnap('half');
+    syncRouteInputs();
+    const target = !route.A ? 'A' : !route.B ? 'B' : null;
+    if (target) { route.active = target; $(`#r${target}`).focus(); renderSuggest(); }
+    else computeRoute();
+  }
+  function closeRoute() {
+    route.layer.remove();
+    routeView.hidden = true;
+    $('#rSuggest').innerHTML = '';
+    const back = route.returnTo; route.returnTo = null;
+    if (back && byId(back)) select(back); else { $('#listView').hidden = false; }
+  }
+  $('#routeBtn').addEventListener('click', () => openRoute());
+  $('#routeBack').addEventListener('click', closeRoute);
+
+  function syncRouteInputs() {
+    for (const k of ['A', 'B']) {
+      const inp = $(`#r${k}`);
+      inp.value = pointLabel(route[k]);
+      inp.classList.toggle('filled', !!route[k]);
+      routeView.querySelector(`[data-clear="${k}"]`).hidden = !route[k];
+    }
+  }
+
+  // Suggestions : « Ma position », puis les clients qui correspondent (les plus proches d'abord).
+  function renderSuggest() {
+    const k = route.active, text = norm($(`#r${k}`).value);
+    const filled = route[k] && $(`#r${k}`).value === pointLabel(route[k]);
+    const words = filled ? [] : text.split(' ').filter(Boolean);
+    const other = route[k === 'A' ? 'B' : 'A'];
+    let list = clients.filter(c => c.id !== other?.id);
+    if (words.length) list = list.filter(c => { const h = norm(`${c.nom} ${c.ville} ${c.code_postal} ${c.code_client || ''} ${c.adresse}`); return words.every(w => h.includes(w)); });
+    else list = list.filter(c => favorites.has(c.id) || hasPos(c));
+    list = list.map(c => ({ c, d: distTo(c) }))
+      .sort((a, b) => (favorites.has(b.c.id) - favorites.has(a.c.id)) * (words.length ? 0 : 1) || (a.d ?? Infinity) - (b.d ?? Infinity))
+      .slice(0, 8);
+    const meItem = !other?.me && (!words.length || 'ma position'.includes(text))
+      ? `<li data-pick="me"><span class="me-ico">${I.route}</span><div class="grow"><div class="t">Ma position</div><div class="s">${me ? 'Position GPS actuelle' : 'En attente du GPS…'}</div></div></li>` : '';
+    $('#rSuggest').innerHTML = meItem + list.map(({ c, d }) => `
+      <li data-pick="${esc(c.id)}">${avatar(c)}<div class="grow"><div class="t">${esc(c.nom)}${favorites.has(c.id) ? `<span class="star">${I.star}</span>` : ''}</div>
+        <div class="s">${esc([c.ville, c.code_client].filter(Boolean).join(' · ') || fullAddress(c))}${hasPos(c) ? '' : ' · non localisé'}</div></div>
+        <span class="d">${fmtDist(d)}</span></li>`).join('') ||
+      (words.length ? '<li class="muted">Aucun client trouvé.</li>' : '');
+    $('#rHint').hidden = false;
+    $('#rResult').hidden = true;
+  }
+
+  function pickRoute(pt) {
+    const k = route.active;
+    if (pt.id && !hasPos(byId(pt.id))) return toast('Ce client n’est pas localisé : corrigez son adresse d’abord.', 3500);
+    route[k] = pt;
+    syncRouteInputs();
+    $('#rSuggest').innerHTML = '';
+    const other = k === 'A' ? 'B' : 'A';
+    if (!route[other]) { route.active = other; $(`#r${other}`).focus(); renderSuggest(); }
+    else { document.activeElement?.blur(); computeRoute(); }
+  }
+
+  $('#rSuggest').addEventListener('pointerdown', e => e.preventDefault()); // garder le clavier ouvert
+  $('#rSuggest').addEventListener('click', e => {
+    const li = e.target.closest('[data-pick]'); if (!li) return;
+    pickRoute(li.dataset.pick === 'me' ? { me: true } : { id: li.dataset.pick });
+  });
+  for (const k of ['A', 'B']) {
+    const inp = $(`#r${k}`);
+    inp.addEventListener('focus', () => { route.active = k; inp.select(); renderSuggest(); });
+    inp.addEventListener('input', () => { route.active = k; renderSuggest(); });
+    inp.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      $('#rSuggest [data-pick]')?.click();
+    });
+  }
+  routeView.addEventListener('click', e => {
+    const k = e.target.closest('[data-clear]')?.dataset.clear; if (!k) return;
+    e.preventDefault();
+    route[k] = null; route.layer.clearLayers(); syncRouteInputs();
+    route.active = k; $(`#r${k}`).focus(); renderSuggest();
+  });
+  $('#rSwap').addEventListener('click', () => {
+    [route.A, route.B] = [route.B, route.A]; syncRouteInputs();
+    if (route.A && route.B) computeRoute(); else renderSuggest();
+  });
+
+  // Toucher un client sur la carte pendant le choix du trajet remplit le champ actif.
+  function onPinClick(id) {
+    if (!inRoute()) return select(id);
+    if (route.A && route.B) route.active = 'B';
+    pickRoute({ id });
+  }
+
+  function drawRoute(geojson, a, b) {
+    route.layer.clearLayers();
+    const coords = geojson.coordinates.map(([lng, lat]) => [lat, lng]);
+    L.polyline(coords, { color: '#ffffff', weight: 10, opacity: 0.9, interactive: false }).addTo(route.layer);
+    L.polyline(coords, { color: '#2563eb', weight: 6, opacity: 0.95, interactive: false }).addTo(route.layer);
+    const pin = cls => L.divIcon({ className: '', html: `<div class="route-pin ${cls}">${cls.toUpperCase()}</div>`, iconSize: [30, 30] });
+    L.marker([a.lat, a.lng], { icon: pin('a'), zIndexOffset: 4000, interactive: false }).addTo(route.layer);
+    L.marker([b.lat, b.lng], { icon: pin('b'), zIndexOffset: 4000, interactive: false }).addTo(route.layer);
+    route.layer.addTo(map);
+    setFollow(false);
+    fitVisible(L.latLngBounds(coords), 16);
+  }
+
+  async function computeRoute() {
+    const a = pointPos(route.A), b = pointPos(route.B);
+    $('#rSuggest').innerHTML = ''; $('#rHint').hidden = true;
+    const out = $('#rResult'); out.hidden = false;
+    if (!a || !b) { out.innerHTML = `<div class="r-warn">${route.A?.me || route.B?.me ? 'Votre position n’est pas encore disponible.' : 'Choisissez un départ et une arrivée.'}</div>`; return; }
+    if (haversine(a, b) < 0.02) { out.innerHTML = '<div class="r-warn">Le départ et l’arrivée sont au même endroit.</div>'; return; }
+    const seq = ++route.seq;
+    out.innerHTML = '<div class="r-card r-loading"><div class="skeleton" style="width:40%;height:28px"></div><div class="skeleton" style="width:70%"></div></div>';
+    const key = [a.lat, a.lng, b.lat, b.lng].map(v => v.toFixed(5)).join(',');
+    let res = route.cache.get(key);
+    try {
+      if (!res) {
+        const url = `${ROUTE_API}?resource=bdtopo-osrm&profile=car&optimization=fastest&start=${a.lng},${a.lat}&end=${b.lng},${b.lat}` +
+          '&geometryFormat=geojson&getSteps=false&timeUnit=minute&distanceUnit=kilometer';
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(`service indisponible (${r.status})`);
+        res = await r.json();
+        if (!Number.isFinite(res.duration) || !res.geometry?.coordinates?.length) throw new Error('aucun itinéraire trouvé');
+        route.cache.set(key, res);
+      }
+    } catch (e) {
+      if (seq !== route.seq) return;
+      const d = haversine(a, b);
+      out.innerHTML = `<div class="r-card"><div class="r-main"><span class="r-time" style="color:var(--ink)">≈ ${fmtEta(d)}</span><span class="r-dist">${fmtDist(d * 1.3)}</span></div>
+        <div class="r-warn">Calcul d’itinéraire impossible (${esc(e.message)}). Estimation à partir de la distance à vol d’oiseau.</div></div>`;
+      return;
+    }
+    if (seq !== route.seq) return; // un autre calcul a été lancé entre-temps
+    // Le service ne couvre que la France : un départ/arrivée « recalé » loin du point demandé signale un trajet hors de France.
+    const snap = s => { const [lng, lat] = String(s).split(',').map(Number); return { lat, lng }; };
+    const offRoad = Math.max(haversine(a, snap(res.start)), haversine(b, snap(res.end)));
+    const arrival = new Date(Date.now() + res.duration * 60000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    const gmaps = `https://www.google.com/maps/dir/?api=1&origin=${a.lat},${a.lng}&destination=${b.lat},${b.lng}&travelmode=driving`;
+    out.innerHTML = `<div class="r-card">
+      <div class="r-main"><span class="r-time">${fmtDuration(res.duration)}</span><span class="r-dist">${fmtDist(res.distance)}</span></div>
+      <div class="r-sub">${esc(pointLabel(route.A))} → ${esc(pointLabel(route.B))}<br>Arrivée vers <b>${arrival}</b> en partant maintenant</div>
+      ${offRoad > 3 ? '<div class="r-warn">Une partie du trajet est hors de France : le temps affiché est incomplet.</div>' : ''}
+      <div class="r-note">Temps estimé hors trafic (itinéraire IGN, le plus rapide en voiture).</div>
+      <div class="r-actions"><a class="btn primary" href="${gmaps}" target="_blank" rel="noopener">${I.route}Ouvrir dans Google Maps</a></div>
+    </div>`;
+    drawRoute(res.geometry, a, b);
+  }
 
   // ---------- Géolocalisation temps réel ----------
   function onPosition(pos) {
