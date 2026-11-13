@@ -92,23 +92,23 @@
   // ---------- Carte & fonds ----------
   const map = L.map('map', { zoomControl: false, maxZoom: 19, minZoom: 3 }).setView([46.6, 2.4], 6);
   map.attributionControl.setPrefix(false);
-  const darkMq = window.matchMedia('(prefers-color-scheme: dark)');
-  const CARTO_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
-  const planLight = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19, subdomains: 'abcd', attribution: CARTO_ATTR });
-  const planDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19, subdomains: 'abcd', attribution: CARTO_ATTR });
+  // Fond OpenStreetMap (sans clé API). Le mode sombre est obtenu par un filtre CSS.
+  const plan = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, className: 'tiles-plan',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  });
   const sat = L.layerGroup([
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Imagerie &copy; Esri' }),
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }),
   ]);
   let baseLayer = null;
   function applyBaseLayer() {
-    const next = settings.layer === 'sat' ? sat : darkMq.matches ? planDark : planLight;
+    const next = settings.layer === 'sat' ? sat : plan;
     if (next === baseLayer) return;
     if (baseLayer) map.removeLayer(baseLayer);
     baseLayer = next.addTo(map);
     $('#layerBtn').classList.toggle('on', settings.layer === 'sat');
   }
-  darkMq.addEventListener?.('change', applyBaseLayer);
   $('#layerBtn').addEventListener('click', () => {
     settings.layer = settings.layer === 'sat' ? 'plan' : 'sat'; saveSettings(); applyBaseLayer();
     toast(settings.layer === 'sat' ? 'Vue satellite' : 'Vue plan', 1200);

@@ -1,5 +1,5 @@
 // Service worker : met en cache l'appli pour un démarrage rapide / hors ligne.
-const CACHE = 'carte-clients-v2';
+const CACHE = 'carte-clients-v3';
 const SHELL = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest', './icon.svg'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -15,7 +15,7 @@ self.addEventListener('fetch', e => {
   e.respondWith(
     caches.match(e.request).then(hit => {
       const net = fetch(e.request).then(res => {
-        if (res.ok && (url.origin === location.origin || /tile|cartocdn|arcgisonline|unpkg|fonts\./.test(url.hostname))) {
+        if (res.ok && (url.origin === location.origin || /tile|arcgisonline|unpkg|fonts\./.test(url.hostname))) {
           const copy = res.clone();
           caches.open(CACHE).then(c => c.put(e.request, copy));
         }

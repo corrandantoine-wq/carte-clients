@@ -52,6 +52,9 @@ svg:not(.leaflet-zoom-animated) { width: 22px; height: 22px; fill: none; stroke:
 /* ===== Carte ===== */
 #map { position: fixed; inset: 0; background: var(--surface-2); }
 .leaflet-container { font: inherit; }
+@media (prefers-color-scheme: dark) {
+  .tiles-plan { filter: invert(1) hue-rotate(180deg) brightness(.92) contrast(.88) saturate(.55); }
+}
 .leaflet-control-attribution { font-size: 10px; background: rgba(255,255,255,.7) !important; border-radius: 6px 0 0 0; }
 @media (prefers-color-scheme: dark) { .leaflet-control-attribution { background: rgba(0,0,0,.5) !important; color: #aaa; } .leaflet-control-attribution a { color: #ccc; } }
 .leaflet-bottom.leaflet-right { bottom: var(--sheet-h); transition: bottom .3s cubic-bezier(.2,.8,.2,1); }
