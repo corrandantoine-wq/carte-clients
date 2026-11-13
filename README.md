@@ -11,6 +11,7 @@ Web app (installable sur mobile) qui affiche la **base clients commune de l'équ
 - **Position en direct**, choix du rayon (1 à 100 km), liste triée par distance, itinéraire Google Maps ou Waze, appel, e-mail.
 - **Import depuis un ERP** (CSV ou Excel) avec correspondance des colonnes, mise à jour par code client et géocodage par lot. Export CSV.
 - **Corbeille** : supprimer un client le met à la corbeille (bouton « Annuler » immédiat). Tout collaborateur peut restaurer ; seul un admin supprime définitivement.
+- **Secteurs** : chaque client peut avoir un commercial attitré. Filtre « Mes clients » ; l'admin attribue les clients et filtre par commercial ; un commercial peut prendre un client libre ou rendre les siens.
 - **Historique** : chaque création, modification, suppression et restauration est enregistrée (qui, quand, ancienne et nouvelle valeur), consultable sur la fiche.
 - **Administration** (menu ☰) : gérer les collaborateurs, choisir les champs HubSpot affichés, vider la base.
 
@@ -42,7 +43,7 @@ La sécurité repose sur les règles **Row Level Security** de la base :
 
 ### 2. Créer les tables
 1. Dans Supabase, ouvrez **SQL Editor → New query**.
-2. Collez le contenu de `supabase/migrations/001_init.sql` et cliquez sur **Run**. Recommencez avec `002_import_erp.sql`, puis `003_historique_corbeille.sql`.
+2. Collez le contenu de `supabase/migrations/001_init.sql` et cliquez sur **Run**. Recommencez avec `002_import_erp.sql`, puis `003_historique_corbeille.sql` et `004_secteurs.sql`.
 3. Déclarez-vous administrateur. Dans une nouvelle requête, avec **votre** adresse :
    ```sql
    insert into public.members (email, role) values ('prenom.nom@societe.fr', 'admin');
@@ -103,11 +104,11 @@ Ils sont lancés automatiquement sur GitHub à chaque modification (onglet **Act
   ```bash
   cd carte-clients && npm run test:unit
   ```
-- **Interface** : 25 scénarios, rejoués sur mobile et sur ordinateur. Ils couvrent la connexion, l'accès refusé, l'import ERP (CSV et Excel), le ré-import sans doublon, les favoris, le rayon, la recherche, le trajet A → B, la corbeille, l'historique, HubSpot et l'administration. La base de données et les services externes sont simulés.
+- **Interface** : 28 scénarios, rejoués sur mobile et sur ordinateur. Ils couvrent la connexion, l'accès refusé, l'import ERP (CSV et Excel), le ré-import sans doublon, les favoris, le rayon, la recherche, le trajet A → B, la corbeille, l'historique, les secteurs, HubSpot et l'administration. La base de données et les services externes sont simulés.
   ```bash
   cd carte-clients && npm ci && npx playwright install chromium && npx playwright test
   ```
-- **Base de données** : 34 vérifications des règles d'accès sur un vrai PostgreSQL (collaborateur, administrateur, personne non autorisée, accès sans connexion).
+- **Base de données** : 42 vérifications des règles d'accès sur un vrai PostgreSQL (collaborateur, administrateur, personne non autorisée, accès sans connexion).
   ```bash
   PGHOST=localhost PGUSER=postgres bash tests/db/run.sh
   ```

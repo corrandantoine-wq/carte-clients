@@ -93,6 +93,30 @@ select pg_temp.check('l''admin supprime définitivement (et c''est journalisé)'
   and exists (select 1 from public.client_history where action = 'suppression définitive'));
 insert into public.clients (nom, code_client) values ('Client de Bob SAS', 'B1'); -- remis pour la suite
 
+-- Secteurs (commercial attitré)
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b', 'bob@soc.fr');
+update public.clients set assigned_to = 'bob@soc.fr' where code_client = 'B1';
+select pg_temp.check('bob prend un client libre', (select assigned_to from public.clients where code_client = 'B1') = 'bob@soc.fr');
+select pg_temp.refused('bob attribue un client à l''admin', $$update public.clients set assigned_to = 'admin@soc.fr' where code_client = 'A1'$$);
+select pg_temp.refused('bob crée un client attribué à un autre', $$insert into public.clients (nom, assigned_to) values ('X', 'admin@soc.fr')$$);
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a', 'admin@soc.fr');
+update public.clients set assigned_to = 'Admin@Soc.fr' where code_client = 'B1';
+select pg_temp.check('l''admin réattribue (e-mail mis en minuscules)', (select assigned_to from public.clients where code_client = 'B1') = 'admin@soc.fr');
+select pg_temp.refused('attribution à une adresse non autorisée', $$update public.clients set assigned_to = 'inconnu@x.fr' where code_client = 'A1'$$);
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b', 'bob@soc.fr');
+select pg_temp.refused('bob retire le client attribué à l''admin', $$update public.clients set assigned_to = null where code_client = 'B1'$$);
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a', 'admin@soc.fr');
+update public.clients set assigned_to = 'bob@soc.fr' where code_client = 'B1';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b', 'bob@soc.fr');
+update public.clients set assigned_to = null where code_client = 'B1';
+select pg_temp.check('bob rend un client qui lui était attribué', (select assigned_to is null from public.clients where code_client = 'B1'));
+select pg_temp.check('les attributions sont dans l''historique',
+  (select count(*) from public.client_history where changes ? 'assigned_to') = 4);
+reset role;
+delete from public.members where email = 'bob@soc.fr';
+update public.clients set assigned_to = null; insert into public.members values ('bob@soc.fr', 'user');
+set role authenticated;
+
 -- Personne non autorisée
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000c', 'intrus@gmail.com');
 select pg_temp.check('l''intrus ne voit aucun client', (select count(*) from public.clients) = 0);

@@ -449,3 +449,14 @@ dialog[open] { animation: up .25s cubic-bezier(.2,.8,.2,1); }
 .hist-chg ins { text-decoration: none; color: var(--ink); font-weight: 500; }
 .trash-actions { display: flex; gap: 6px; flex: none; }
 .trash-actions .btn { height: 34px; padding: 0 12px; font-size: 13px; }
+
+/* ===== Secteurs (commercial attitré) ===== */
+.chip-select { appearance: none; -webkit-appearance: none; padding: 0 30px 0 14px; cursor: pointer; font: inherit; font-size: 14px; font-weight: 500;
+  background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239aa3b2' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center / 14px; max-width: 220px; }
+.chip-select.on { background-color: var(--accent-soft); color: var(--accent); border-color: transparent; font-weight: 600; }
+.chip.mine svg { fill: none; }
+.badge.mine { background: var(--accent-soft); color: var(--accent); }
+.owner-row { align-items: center; }
+.owner-row .grow { flex: 1; min-width: 0; }
+.owner-select { height: 40px; max-width: 62%; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); font: inherit; font-size: 14px; padding: 0 8px; }
+.btn.small { height: 36px; padding: 0 14px; font-size: 14px; flex: none; }

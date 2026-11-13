@@ -12,12 +12,12 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   const SETTINGS_KEY = 'carte-clients:settings';
   const MAX_LIST = 300;
   const RADII = [1, 2, 5, 10, 25, 50, 100, 0]; // 0 = tous
-  const COLS = 'id,code_client,nom,adresse,code_postal,ville,telephone,email,notes,lat,lng,hubspot_id,created_by,deleted_at';
+  const COLS = 'id,code_client,nom,adresse,code_postal,ville,telephone,email,notes,lat,lng,hubspot_id,created_by,deleted_at,assigned_to';
 
   // ---------- État ----------
   let clients = [];
   let favorites = new Set();
-  const settings = Object.assign({ radius: 10, follow: true, layer: 'plan', favOnly: false }, load(SETTINGS_KEY, {}));
+  const settings = Object.assign({ radius: 10, follow: true, layer: 'plan', favOnly: false, owner: '' }, load(SETTINGS_KEY, {}));
   if (settings.onlyRadius === false) settings.radius = 0;
   delete settings.onlyRadius;
   let user = null;          // utilisateur Supabase connecté
@@ -28,6 +28,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   let query = '';
   let selectedId = null;
   let channel = null;
+  let memberEmails = [];    // pour l'administrateur : liste des collaborateurs (attribution des secteurs)
 
   // ---------- Utilitaires ----------
   function load(key, fallback) {
@@ -128,9 +129,26 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     return iconCache.get(key);
   }
   const stateOf = c => (c.id === selectedId ? 'selected' : inRadius(distTo(c)) ? 'near' : 'far');
-  const visibleOnMap = c => hasPos(c) && (!settings.favOnly || favorites.has(c.id));
+  const myEmail = () => user?.email?.toLowerCase() || '';
+  const ownerOk = c => !settings.owner || (settings.owner === 'me' ? c.assigned_to === myEmail() : settings.owner === 'none' ? !c.assigned_to : c.assigned_to === settings.owner);
+  const visibleOnMap = c => hasPos(c) && (!settings.favOnly || favorites.has(c.id)) && ownerOk(c);
 
+  // Pendant l'animation qui fait sortir un client de son groupe, on ne reconstruit pas les marqueurs
+  // (la bibliothèque de regroupement planterait) : la reconstruction est faite à la fin de l'animation.
+  let zoomPending = false, renderQueued = false;
+  function zoomToMarker(m, done) {
+    zoomPending = true;
+    const finish = () => {
+      if (!zoomPending) return;
+      zoomPending = false; clearTimeout(safety);
+      if (renderQueued) { renderQueued = false; renderMarkers(); }
+      done();
+    };
+    const safety = setTimeout(finish, 2000); // au cas où l'animation n'aboutit pas
+    cluster.zoomToShowLayer(m, finish);
+  }
   function renderMarkers() {
+    if (zoomPending) { renderQueued = true; return; }
     cluster.clearLayers(); markers.clear();
     const layers = [];
     for (const c of clients) {
@@ -225,8 +243,16 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   // ---------- Rayon & favoris (chips) ----------
   function renderChips() {
     $('#chips').innerHTML =
-      `<button class="chip fav" data-fav aria-pressed="${settings.favOnly}">${I.star}Favoris${favorites.size ? ` · ${favorites.size}` : ''}</button><span class="chip-sep"></span>` +
+      `<button class="chip fav" data-fav aria-pressed="${settings.favOnly}">${I.star}Favoris${favorites.size ? ` · ${favorites.size}` : ''}</button>` +
+      (isAdmin
+        ? `<select class="chip chip-select${settings.owner ? ' on' : ''}" id="ownerSel" aria-label="Filtrer par commercial">
+             <option value="">Tous les commerciaux</option><option value="me">Mes clients</option><option value="none">Non attribués</option>
+             ${memberEmails.filter(e => e !== myEmail()).map(e => `<option value="${esc(e)}">${esc(e)}</option>`).join('')}</select>`
+        : `<button class="chip fav mine" data-mine aria-pressed="${settings.owner === 'me'}">${I.user}Mes clients</button>`) +
+      `<span class="chip-sep"></span>` +
       RADII.map(r => `<button class="chip" role="radio" data-r="${r}" aria-checked="${settings.radius === r}">${r ? `${r} km` : 'Tous'}</button>`).join('');
+    const sel = $('#ownerSel');
+    if (sel) { if (![...sel.options].some(o => o.value === settings.owner)) settings.owner = ''; sel.value = settings.owner; }
   }
   function setRadius(r) {
     settings.radius = r; saveSettings(); renderChips(); updateRadiusCircle(); refresh();
@@ -234,6 +260,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   }
   $('#chips').addEventListener('click', e => {
     const b = e.target.closest('.chip'); if (!b) return;
+    if (b.hasAttribute('data-mine')) { setOwner(settings.owner === 'me' ? '' : 'me'); return; }
     if (b.hasAttribute('data-fav')) {
       settings.favOnly = !settings.favOnly; saveSettings(); renderChips(); renderMarkers(); renderList();
       if (settings.favOnly && !favorites.size) toast('Aucun favori : ouvrez une fiche client et touchez l’étoile.', 3500);
@@ -241,6 +268,11 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     }
     setRadius(+b.dataset.r);
   });
+  function setOwner(v) {
+    settings.owner = v; saveSettings(); renderChips(); renderMarkers(); renderList();
+    if ($('#ownerSel')) $('#ownerSel').value = v;
+  }
+  $('#chips').addEventListener('change', e => { if (e.target.id === 'ownerSel') setOwner(e.target.value); });
   function updateRadiusCircle() {
     if (!me || !settings.radius) { map.removeLayer(radiusCircle); return; }
     radiusCircle.setLatLng([me.lat, me.lng]).setRadius(settings.radius * 1000);
@@ -250,6 +282,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   // ---------- Liste ----------
   function matches(c) {
     if (settings.favOnly && !favorites.has(c.id)) return false;
+    if (!ownerOk(c)) return false;
     if (!query) return true;
     const hay = `${c.code_client || ''} ${c.nom} ${c.adresse} ${c.code_postal} ${c.ville} ${c.telephone} ${c.email} ${c.notes}`.toLowerCase();
     return query.split(/\s+/).every(w => hay.includes(w));
@@ -270,7 +303,8 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
 
     const total = clients.length, s = n => (n > 1 ? 's' : '');
     const scope = settings.favOnly ? 'favori' : 'client';
-    $('#title').textContent = query ? 'Résultats' : settings.favOnly ? 'Mes favoris' : (settings.radius && me) ? 'Autour de vous' : 'Tous les clients';
+    $('#title').textContent = query ? 'Résultats' : settings.favOnly ? 'Mes favoris' : settings.owner === 'me' ? 'Mes clients'
+      : settings.owner === 'none' ? 'Clients non attribués' : settings.owner ? `Secteur de ${settings.owner.split('@')[0]}` : (settings.radius && me) ? 'Autour de vous' : 'Tous les clients';
     const fr = v => v.toLocaleString('fr-FR');
     $('#subtitle').textContent = query ? `${fr(rows.length)} client${s(rows.length)} trouvé${s(rows.length)}`
       : !me ? `${fr(settings.favOnly ? favorites.size : total)} ${scope}${s(settings.favOnly ? favorites.size : total)} · ${watchId == null ? 'position indisponible' : 'recherche de votre position…'}`
@@ -284,6 +318,9 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
             '<div><button class="btn primary" data-empty="import">Importer un CSV</button> <button class="btn ghost" data-empty="sample">Exemple</button></div>')
         : query ? emptyState(I.search, 'Aucun résultat', 'Essayez un autre nom, une ville ou un code postal.')
         : settings.favOnly && !favorites.size ? emptyState(I.star, 'Aucun favori', 'Ouvrez la fiche d’un client et touchez l’étoile pour l’ajouter ici.')
+        : settings.owner && !clients.some(ownerOk) ? emptyState(I.user, settings.owner === 'me' ? 'Aucun client ne vous est attribué' : 'Aucun client dans ce secteur',
+            settings.owner === 'me' ? 'Ouvrez la fiche d’un client libre et touchez « Je m’en occupe », ou demandez à votre administrateur.' : '',
+            '<div><button class="btn ghost" data-empty="allowners">Voir tous les clients</button></div>')
         : emptyState(I.radar, `Personne à moins de ${settings.radius} km`, 'Élargissez la zone de recherche.',
             '<div><button class="btn ghost" data-empty="wider">Élargir le rayon</button></div>');
       return;
@@ -292,7 +329,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
       <li class="item" data-id="${esc(c.id)}">
         ${avatar(c)}
         <div class="info">
-          <div class="name">${esc(c.nom)}${favorites.has(c.id) ? `<span class="star" title="Favori">${I.star}</span>` : ''}${hasPos(c) ? '' : '<span class="badge">non localisé</span>'}</div>
+          <div class="name">${esc(c.nom)}${favorites.has(c.id) ? `<span class="star" title="Favori">${I.star}</span>` : ''}${c.assigned_to && c.assigned_to === myEmail() ? '<span class="badge mine">vous</span>' : ''}${hasPos(c) ? '' : '<span class="badge">non localisé</span>'}</div>
           <div class="addr">${esc(fullAddress(c) || c.telephone || '')}</div>
         </div>
         <div class="meta">
@@ -310,6 +347,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     const em = e.target.closest('[data-empty]')?.dataset.empty;
     if (em === 'import') return $('#csvInput').click();
     if (em === 'sample') return loadSample();
+    if (em === 'allowners') return setOwner('');
     if (em === 'wider') return setRadius(RADII[Math.min(RADII.indexOf(settings.radius) + 1, RADII.length - 1)]);
     const li = e.target.closest('li[data-id]'); if (li) select(li.dataset.id);
   });
@@ -352,6 +390,12 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
         ${row(I.mail, 'E-mail', c.email, c.email ? `mailto:${c.email}` : null)}
         ${row(I.note, 'Notes', c.notes)}
         ${row(I.users, 'Code client', c.code_client)}
+        <div class="d-row owner-row">${I.user}<div class="grow"><div class="lbl">Commercial attitré</div>${isAdmin ? '' : `<div class="val">${c.assigned_to ? (c.assigned_to === myEmail() ? 'Vous' : esc(c.assigned_to)) : 'Non attribué'}</div>`}</div>
+          ${isAdmin ? `<select class="owner-select" data-assign aria-label="Attribuer à">
+              <option value="">Non attribué</option>${[...new Set([...memberEmails, c.assigned_to].filter(Boolean))].map(e => `<option value="${esc(e)}"${e === c.assigned_to ? ' selected' : ''}>${e === myEmail() ? 'Moi' : esc(e)}</option>`).join('')}</select>`
+          : !c.assigned_to ? '<button class="btn ghost small" data-act="take">Je m’en occupe</button>'
+          : c.assigned_to === myEmail() ? '<button class="btn ghost small" data-act="release">Ne plus m’en occuper</button>' : ''}
+        </div>
       </div>
       <div id="crm" class="crm">${crmHtml(c)}</div>
       <details class="hist" id="hist"><summary>${I.note}Historique des modifications</summary><div class="hist-body" id="histBody"></div></details>
@@ -373,7 +417,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
       setFollow(false);
       const m = markers.get(id);
       const go = () => showPoint([c.lat, c.lng], Math.max(map.getZoom(), 15));
-      if (m && cluster.getVisibleParent(m) !== m) cluster.zoomToShowLayer(m, go);
+      if (m && cluster.getVisibleParent(m) !== m) zoomToMarker(m, go);
       else setTimeout(go, 60);
     }
   }
@@ -394,11 +438,20 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
       try { await trashClient(c); } catch {}
     }
     if (act === 'route') openRoute({ id: c.id });
+    if (act === 'take' || act === 'release') {
+      try { await updateClient(c.id, { assigned_to: act === 'take' ? myEmail() : null }); renderDetail(); renderList(); toast(act === 'take' ? 'Client ajouté à votre secteur' : 'Client retiré de votre secteur', 2000); } catch {}
+    }
     if (act === 'hs-link') openHubspotLink(c);
     if (act === 'hs-unlink' && confirm('Retirer le lien avec la fiche HubSpot ?')) {
       await updateClient(c.id, { hubspot_id: null }); renderDetail();
     }
     if (act === 'hs-retry') { crmCache.delete(c.hubspot_id); renderDetail(); }
+  });
+
+  $('#detail').addEventListener('change', async e => {
+    const sel = e.target.closest('[data-assign]'); const c = byId(selectedId); if (!sel || !c) return;
+    try { await updateClient(c.id, { assigned_to: sel.value || null }); renderDetail(); renderMarkers(); renderList(); toast(sel.value ? `Attribué à ${sel.value}` : 'Client non attribué', 2000); }
+    catch { renderDetail(); }
   });
 
   // ---------- Favoris ----------
@@ -534,7 +587,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   });
 
   // ---------- Historique d'un client ----------
-  const FIELD_LABELS = { nom: 'Nom', code_client: 'Code client', adresse: 'Adresse', code_postal: 'Code postal', ville: 'Ville', telephone: 'Téléphone', email: 'E-mail', notes: 'Notes', hubspot_id: 'Lien HubSpot' };
+  const FIELD_LABELS = { nom: 'Nom', code_client: 'Code client', adresse: 'Adresse', code_postal: 'Code postal', ville: 'Ville', telephone: 'Téléphone', email: 'E-mail', notes: 'Notes', hubspot_id: 'Lien HubSpot', assigned_to: 'Commercial attitré' };
   const ACTION_LABELS = { 'création': 'Création', 'modification': 'Modification', 'suppression': 'Mise à la corbeille', 'restauration': 'Restauration', 'suppression définitive': 'Suppression définitive' };
   const showVal = v => (v == null || v === '' ? 'vide' : `« ${esc(v)} »`);
   async function loadHistory(id) {
@@ -1032,7 +1085,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   function exportCsv() {
     const rows = clients.map(c => ({ code_client: c.code_client ?? '', nom: c.nom, adresse: c.adresse, code_postal: c.code_postal, ville: c.ville,
       telephone: c.telephone, email: c.email, notes: c.notes, latitude: c.lat ?? '', longitude: c.lng ?? '',
-      hubspot_id: c.hubspot_id ?? '', favori: favorites.has(c.id) ? 'oui' : '' }));
+      hubspot_id: c.hubspot_id ?? '', commercial: c.assigned_to ?? '', favori: favorites.has(c.id) ? 'oui' : '' }));
     const csv = Papa.unparse(rows, { delimiter: ';' });
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
     const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `clients-${new Date().toISOString().slice(0, 10)}.csv` });
@@ -1098,6 +1151,11 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
 
   // ---------- Administration ----------
   const membersDlg = $('#membersDialog');
+  async function loadMemberEmails() {
+    memberEmails = [];
+    if (!isAdmin) return;
+    try { memberEmails = (await q(sb.from('members').select('email').order('email'), 'Chargement des collaborateurs')).map(m => m.email); } catch {}
+  }
   async function renderMembers() {
     const list = $('#membersList');
     list.innerHTML = '<li class="muted">Chargement…</li>';
@@ -1122,7 +1180,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('Adresse e-mail invalide.');
     try {
       await q(sb.from('members').upsert({ email, role: f.role.value }), 'Ajout impossible');
-      f.email.value = ''; toast(`${email} peut maintenant créer son compte.`, 3500); renderMembers();
+      f.email.value = ''; toast(`${email} peut maintenant créer son compte.`, 3500); renderMembers(); await loadMemberEmails(); renderChips();
     } catch {}
   });
   $('#membersList').addEventListener('change', async e => {
@@ -1313,6 +1371,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     if (!me_) { showAuth('denied'); return; }
     sessionUserId = user.id;
     isAdmin = me_.role === 'admin';
+    if (!isAdmin && !['', 'me'].includes(settings.owner)) { settings.owner = ''; saveSettings(); } // filtre d'admin resté sur l'appareil
     $('#userBtn').textContent = initials(user.email);
     $('#userBtn').style.background = colorFor(user.email);
     $('#menuAvatar').textContent = initials(user.email);
@@ -1320,6 +1379,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     $('#menuEmail').textContent = user.email;
     $('#menuRole').textContent = isAdmin ? 'Administrateur' : 'Collaborateur';
     document.querySelector('.admin-only').hidden = !isAdmin;
+    await loadMemberEmails();
     auth.hidden = true;
     await loadData();
     subscribe();

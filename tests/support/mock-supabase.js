@@ -17,7 +17,9 @@
   const uid = () => session?.user.id;
   const isAdmin = () => db.members.some(m => m.email === session?.user.email && m.role === 'admin');
   // Reproduit le déclencheur d'historique de la base (003_historique_corbeille.sql).
-  const FIELDS = ['nom', 'code_client', 'adresse', 'code_postal', 'ville', 'telephone', 'email', 'notes', 'hubspot_id'];
+  const FIELDS = ['nom', 'code_client', 'adresse', 'code_postal', 'ville', 'telephone', 'email', 'notes', 'hubspot_id', 'assigned_to'];
+  // Reproduit la règle d'attribution (004_secteurs.sql).
+  const assignOk = (before, after) => isAdmin() || (before == null && after === session?.user.email) || (before === session?.user.email && after == null);
   let histId = 0;
   function log(action, row, changes = {}) {
     db.client_history.push({ id: ++histId, client_id: row.id, client_nom: row.nom, action, changes, user_id: uid(), user_email: session?.user.email, at: new Date(Date.now() + histId).toISOString() });
@@ -55,13 +57,16 @@
       } else if (this.op === 'insert' || this.op === 'upsert') {
         out = this.p.map(r => {
           const row = { ...r };
-          if (this.t === 'clients') Object.assign(row, { id: crypto.randomUUID(), created_by: uid(), hubspot_id: r.hubspot_id ?? null, deleted_at: r.deleted_at ?? null });
+          if (this.t === 'clients') Object.assign(row, { id: crypto.randomUUID(), created_by: uid(), hubspot_id: r.hubspot_id ?? null, deleted_at: r.deleted_at ?? null, assigned_to: r.assigned_to ?? null });
           if (this.t === 'favorites') row.user_id = uid();
           if (this.op === 'upsert') { const k = this.key; const ex = row[k] != null && db[this.t].find(x => x[k] === row[k]); if (ex) { const before = { ...ex }; Object.assign(ex, r); if (this.t === 'clients') logUpdate(before, ex); return { ...ex }; } }
           db[this.t].push(row); if (this.t === 'clients') log('création', row); return row;
         });
       } else if (this.op === 'update') {
         out = this.rows();
+        if (this.t === 'clients' && 'assigned_to' in this.p && out.some(r => (r.assigned_to ?? null) !== this.p.assigned_to && !assignOk(r.assigned_to ?? null, this.p.assigned_to))) {
+          return Promise.resolve({ data: null, error: { message: 'Seul un administrateur peut attribuer ce client à un autre commercial.', code: '42501' } }).then(res, rej);
+        }
         if (this.t === 'clients' && this.p.deleted_at && out.some(r => !r.deleted_at && r.created_by !== uid() && !isAdmin())) {
           return Promise.resolve({ data: null, error: { message: 'Seul l\'auteur de la fiche ou un administrateur peut la supprimer.', code: '42501' } }).then(res, rej);
         }
