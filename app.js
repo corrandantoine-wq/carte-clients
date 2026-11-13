@@ -8,7 +8,7 @@
   const SETTINGS_KEY = 'carte-clients:settings';
   const MAX_LIST = 300;
   const RADII = [1, 2, 5, 10, 25, 50, 100, 0]; // 0 = tous
-  const COLS = 'id,code_client,nom,adresse,code_postal,ville,telephone,email,notes,lat,lng,hubspot_id,created_by';
+  const COLS = 'id,code_client,nom,adresse,code_postal,ville,telephone,email,notes,lat,lng,hubspot_id,created_by,deleted_at';
 
   // ---------- État ----------
   let clients = [];
@@ -72,9 +72,13 @@
   const avatar = c => `<div class="avatar" style="background:${colorFor(c.nom)}">${esc(initials(c.nom))}</div>`;
 
   let toastTimer;
-  function toast(msg, ms = 3000) {
-    const t = $('#toast'); t.textContent = msg; t.hidden = false;
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), ms);
+  // Notification ; action facultative : { label: 'Annuler', run: () => … }.
+  function toast(msg, ms = 3000, action = null) {
+    const t = $('#toast'), b = $('#toastAction');
+    $('#toastMsg').textContent = msg; t.hidden = false;
+    b.hidden = !action; b.textContent = action?.label || '';
+    b.onclick = action ? () => { t.hidden = true; action.run(); } : null;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), action ? Math.max(ms, 6000) : ms);
   }
 
   const I = {
@@ -363,8 +367,12 @@
   }
 
   // ---------- Fiche client ----------
+  let detailFor = null;
   function renderDetail() {
     const c = byId(selectedId); if (!c) return closeDetail();
+    // La fiche est redessinée quand la position change : on garde l'historique ouvert s'il l'était.
+    const keepHist = detailFor === c.id && $('#hist')?.open ? $('#histBody').innerHTML : null;
+    detailFor = c.id;
     const d = distTo(c);
     const fav = favorites.has(c.id);
     $('#favBtn').setAttribute('aria-pressed', fav);
@@ -391,10 +399,12 @@
         ${row(I.users, 'Code client', c.code_client)}
       </div>
       <div id="crm" class="crm">${crmHtml(c)}</div>
+      <details class="hist" id="hist"><summary>${I.note}Historique des modifications</summary><div class="hist-body" id="histBody"></div></details>
       <div class="d-foot">
         <button class="btn ghost" data-act="edit">${I.edit}Modifier</button>
         ${canDelete(c) ? `<button class="btn danger" data-act="delete">${I.trash}Supprimer</button>` : ''}
       </div>`;
+    if (keepHist != null) { $('#hist').open = true; $('#histBody').innerHTML = keepHist; }
     if (c.hubspot_id) loadCrm(c);
   }
 
@@ -425,11 +435,8 @@
     const act = e.target.closest('[data-act]')?.dataset.act;
     const c = byId(selectedId); if (!act || !c) return;
     if (act === 'edit') openForm(c);
-    if (act === 'delete' && confirm(`Supprimer « ${c.nom} » de la base commune ?\nIl disparaîtra pour tous les collaborateurs.`)) {
-      const rows = await q(sb.from('clients').delete().eq('id', c.id).select('id'), 'Suppression impossible');
-      if (!rows.length) return toast('Seul l’auteur de la fiche ou un administrateur peut la supprimer.', 4000);
-      clients = clients.filter(x => x.id !== c.id); favorites.delete(c.id);
-      closeDetail(); scheduleFullRender(); toast('Client supprimé');
+    if (act === 'delete' && confirm(`Mettre « ${c.nom} » à la corbeille ?\nIl disparaîtra pour tous les collaborateurs (restauration possible depuis la corbeille).`)) {
+      try { await trashClient(c); } catch {}
     }
     if (act === 'route') openRoute({ id: c.id });
     if (act === 'hs-link') openHubspotLink(c);
@@ -522,6 +529,75 @@
     hsDlg.close(); toast('Client relié à HubSpot');
     if (selectedId === hsTarget) renderDetail();
   });
+
+  // ---------- Corbeille ----------
+  async function trashClient(c) {
+    await q(sb.from('clients').update({ deleted_at: new Date().toISOString() }).eq('id', c.id).select('id'), 'Suppression impossible');
+    clients = clients.filter(x => x.id !== c.id);
+    if (selectedId === c.id) closeDetail();
+    scheduleFullRender();
+    toast(`« ${c.nom} » mis à la corbeille`, 6000, { label: 'Annuler', run: () => restoreClient(c.id) });
+  }
+  async function restoreClient(id) {
+    try {
+      const row = await q(sb.from('clients').update({ deleted_at: null }).eq('id', id).select(COLS).single(), 'Restauration impossible');
+      const c = clean(row);
+      const i = clients.findIndex(x => x.id === id); i >= 0 ? (clients[i] = c) : clients.push(c);
+      scheduleFullRender(); toast(`« ${c.nom} » restauré`);
+      return c;
+    } catch { return null; }
+  }
+  const trashDlg = $('#trashDialog');
+  const fmtWhen = iso => new Date(iso).toLocaleString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  async function openTrash() {
+    trashDlg.showModal();
+    trashDlg.querySelector('.admin-hint').hidden = !isAdmin;
+    const list = $('#trashList');
+    list.innerHTML = '<li class="muted">Chargement…</li>';
+    try {
+      const rows = await q(sb.from('clients').select(COLS + ',deleted_by').not('deleted_at', 'is', null).order('deleted_at', { ascending: false }).limit(500), 'Chargement de la corbeille');
+      $('#trashEmpty').hidden = !isAdmin || !rows.length;
+      list.innerHTML = rows.length ? rows.map(c => `
+        <li data-id="${esc(c.id)}">${avatar(c)}
+          <div class="grow"><div class="t">${esc(c.nom)}</div>
+            <div class="s">${esc([c.ville, c.code_client].filter(Boolean).join(' · '))}${c.ville || c.code_client ? ' · ' : ''}supprimé le ${fmtWhen(c.deleted_at)}${c.deleted_by === user.id ? ' par vous' : ''}</div></div>
+          <div class="trash-actions"><button class="btn ghost" data-restore>Restaurer</button>${isAdmin ? `<button class="icon-del" data-purge aria-label="Supprimer définitivement">${I.trash}</button>` : ''}</div>
+        </li>`).join('') : '<li class="muted">La corbeille est vide.</li>';
+    } catch { list.innerHTML = '<li class="muted">Impossible de charger la corbeille.</li>'; }
+  }
+  $('#trashList').addEventListener('click', async e => {
+    const li = e.target.closest('li[data-id]'); if (!li) return;
+    if (e.target.closest('[data-restore]')) { if (await restoreClient(li.dataset.id)) li.remove(); }
+    if (e.target.closest('[data-purge]') && confirm('Supprimer définitivement ce client ? Cette action est irréversible.')) {
+      try { await q(sb.from('clients').delete().eq('id', li.dataset.id), 'Suppression impossible'); li.remove(); toast('Client supprimé définitivement'); } catch {}
+    }
+    if (!$('#trashList li[data-id]')) openTrash();
+  });
+  $('#trashEmpty').addEventListener('click', async () => {
+    if (prompt('Supprimer DÉFINITIVEMENT tous les clients de la corbeille ?\nTapez SUPPRIMER pour confirmer.') !== 'SUPPRIMER') return;
+    try { await q(sb.from('clients').delete().not('deleted_at', 'is', null), 'Suppression impossible'); toast('Corbeille vidée'); openTrash(); } catch {}
+  });
+
+  // ---------- Historique d'un client ----------
+  const FIELD_LABELS = { nom: 'Nom', code_client: 'Code client', adresse: 'Adresse', code_postal: 'Code postal', ville: 'Ville', telephone: 'Téléphone', email: 'E-mail', notes: 'Notes', hubspot_id: 'Lien HubSpot' };
+  const ACTION_LABELS = { 'création': 'Création', 'modification': 'Modification', 'suppression': 'Mise à la corbeille', 'restauration': 'Restauration', 'suppression définitive': 'Suppression définitive' };
+  const showVal = v => (v == null || v === '' ? 'vide' : `« ${esc(v)} »`);
+  async function loadHistory(id) {
+    const body = $('#histBody'); if (!body) return;
+    body.innerHTML = '<div class="skeleton"></div><div class="skeleton" style="width:60%"></div>';
+    try {
+      const rows = await q(sb.from('client_history').select('action,changes,user_email,at').eq('client_id', id).order('at', { ascending: false }).limit(30), 'Chargement de l’historique');
+      if (selectedId !== id) return;
+      body.innerHTML = rows.length ? rows.map(h => `
+        <div class="hist-item">
+          <div><span class="hist-act ${esc(h.action)}">${ACTION_LABELS[h.action] || esc(h.action)}</span></div>
+          <div class="hist-meta">${fmtWhen(h.at)} · ${h.user_email ? (h.user_email === user.email ? 'vous' : esc(h.user_email)) : 'import / système'}</div>
+          ${Object.keys(h.changes || {}).length ? `<ul class="hist-chg">${Object.entries(h.changes).map(([k, [a, b]]) =>
+            `<li>${FIELD_LABELS[k] || esc(k)} : <del>${showVal(a)}</del> → <ins>${showVal(b)}</ins></li>`).join('')}</ul>` : ''}
+        </div>`).join('') : '<div class="crm-empty">Aucune modification enregistrée.</div>';
+    } catch { body.innerHTML = '<div class="crm-empty">Historique indisponible.</div>'; }
+  }
+  $('#detail').addEventListener('toggle', e => { if (e.target.id === 'hist' && e.target.open) loadHistory(selectedId); }, true);
 
   // ---------- Trajet A → B (temps de route) ----------
   // Service d'itinéraire de l'IGN (gratuit, sans clé, couvre la France). Temps estimé hors trafic.
@@ -759,7 +835,7 @@
     try {
       const all = [];
       for (let from = 0; ; from += 1000) { // pagination (1000 lignes max par requête)
-        const page = await q(sb.from('clients').select(COLS).order('nom').range(from, from + 999), 'Chargement des clients');
+        const page = await q(sb.from('clients').select(COLS).is('deleted_at', null).order('nom').range(from, from + 999), 'Chargement des clients');
         all.push(...page);
         if (page.length < 1000) break;
       }
@@ -778,8 +854,10 @@
     channel?.unsubscribe();
     channel = sb.channel('clients-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, ({ eventType, new: row, old }) => {
-        if (eventType === 'DELETE') { clients = clients.filter(c => c.id !== old.id); if (selectedId === old.id) closeDetail(); }
-        else {
+        if (eventType === 'DELETE' || row?.deleted_at) { // supprimé ou mis à la corbeille
+          const id = eventType === 'DELETE' ? old.id : row.id;
+          clients = clients.filter(c => c.id !== id); if (selectedId === id) closeDetail();
+        } else {
           const i = clients.findIndex(c => c.id === row.id);
           i >= 0 ? (clients[i] = clean(row)) : clients.push(clean(row));
         }
@@ -1038,7 +1116,8 @@
     for (const r of imp.data) {
       const c = rowToClient(r);
       if (!c.nom) { skipped++; continue; }
-      if (c.code_client) inFile.set(c.code_client, c); else noCode.push(c);
+      if (c.code_client) { if (!inFile.has(c.code_client)) inFile.set(c.code_client, c); } // doublon : on garde la 1re ligne
+      else noCode.push(c);
     }
     const updates = [], creates = [];
     for (const [code, c] of inFile) (byCode.has(code) ? updates : creates).push(c);
@@ -1095,6 +1174,7 @@
           c.lat = same ? old.lat : null; c.lng = same ? old.lng : null;
         }
         if ('hubspot_id' in c && !c.hubspot_id && old?.hubspot_id) c.hubspot_id = old.hubspot_id; // ne pas perdre un lien existant
+        c.deleted_at = null; // un client de l'ERP mis à la corbeille revient dans la base
         return c;
       };
       // Clients déjà connus : les notes saisies dans l'appli ne sont jamais remplacées par celles de l'ERP.
@@ -1327,12 +1407,13 @@
     if (action === 'members') { membersDlg.showModal(); renderMembers(); }
     if (action === 'crmfields') openFields();
     if (action === 'logout') { await sb.auth.signOut(); }
+    if (action === 'trash') openTrash();
     if (action === 'clear') {
-      const word = prompt(`Cette action supprime les ${clients.length} clients de la base commune, pour TOUS les collaborateurs.\n\nTapez SUPPRIMER pour confirmer.`);
+      const word = prompt(`Cette action met les ${clients.length} clients de la base commune à la corbeille, pour TOUS les collaborateurs.\nIls resteront restaurables depuis la corbeille.\n\nTapez SUPPRIMER pour confirmer.`);
       if (word !== 'SUPPRIMER') return;
       try {
-        await q(sb.from('clients').delete().not('id', 'is', null), 'Suppression impossible');
-        clients = []; favorites.clear(); closeDetail(); scheduleFullRender(); toast('Base vidée');
+        await q(sb.from('clients').update({ deleted_at: new Date().toISOString() }).is('deleted_at', null), 'Mise à la corbeille impossible');
+        clients = []; closeDetail(); scheduleFullRender(); toast('Tous les clients sont dans la corbeille');
       } catch {}
     }
   });

@@ -1,0 +1,16 @@
+{
+  "name": "carte-clients",
+  "private": true,
+  "description": "Carte Clients : tests automatiques (l'appli elle-même n'a pas besoin de build).",
+  "scripts": {
+    "test": "playwright test",
+    "test:db": "bash tests/db/run.sh"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "leaflet": "1.9.4",
+    "leaflet.markercluster": "1.5.3",
+    "papaparse": "5.4.1",
+    "xlsx": "0.18.5"
+  }
+}

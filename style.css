@@ -426,3 +426,26 @@ dialog[open] { animation: up .25s cubic-bezier(.2,.8,.2,1); }
 .route-pin { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 14px; border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,.35); }
 .route-pin.a { background: var(--ok); }
 .route-pin.b { background: var(--near); }
+
+/* ===== Corbeille, historique, notification avec action ===== */
+.toast { display: flex; align-items: center; gap: 14px; }
+.toast[hidden] { display: none; }
+#toastAction { color: #8fb4ff; font-weight: 700; text-transform: uppercase; font-size: 13px; letter-spacing: .04em; padding: 4px 2px; }
+@media (prefers-color-scheme: dark) { #toastAction { color: #2563eb; } }
+.hist { margin-top: 18px; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+.hist summary { padding: 12px 14px; background: var(--surface-2); font-weight: 600; cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px; }
+.hist summary::-webkit-details-marker { display: none; }
+.hist summary::after { content: '›'; margin-left: auto; font-size: 20px; color: var(--ink-3); transition: transform .2s; }
+.hist[open] summary::after { transform: rotate(90deg); }
+.hist-body { padding: 4px 14px 10px; }
+.hist-item { padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.hist-item:last-child { border-bottom: 0; }
+.hist-meta { color: var(--ink-3); font-size: 12.5px; }
+.hist-act { font-weight: 600; }
+.hist-act.suppression, .hist-act.suppression.définitive { color: var(--danger); }
+.hist-act.restauration { color: var(--ok); }
+.hist-chg { margin: 4px 0 0; padding-left: 16px; color: var(--ink-2); }
+.hist-chg del { color: var(--ink-3); }
+.hist-chg ins { text-decoration: none; color: var(--ink); font-weight: 500; }
+.trash-actions { display: flex; gap: 6px; flex: none; }
+.trash-actions .btn { height: 34px; padding: 0 12px; font-size: 13px; }
