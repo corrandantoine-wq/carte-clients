@@ -2,63 +2,100 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#1d4ed8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0e1116" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>Carte Clients</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">📍 Carte Clients</div>
-    <input id="search" type="search" placeholder="Rechercher un client, une ville…" autocomplete="off">
-    <button id="menuBtn" class="icon-btn" aria-label="Menu">☰</button>
-  </header>
+  <main id="map" aria-label="Carte des clients"></main>
 
-  <div id="menu" class="menu" hidden>
-    <button data-action="add">➕ Ajouter un client</button>
-    <label class="file-btn">📥 Importer un fichier CSV<input id="csvInput" type="file" accept=".csv,text/csv,text/plain" hidden></label>
-    <button data-action="sample">🧪 Charger des clients d'exemple</button>
-    <button data-action="geocode">🌍 Géocoder les adresses manquantes</button>
-    <button data-action="export">📤 Exporter en CSV</button>
-    <button data-action="clear" class="danger">🗑️ Vider la base</button>
-  </div>
-
-  <main id="map"></main>
-
-  <div class="map-controls">
-    <button id="locateBtn" class="fab" title="Suivre ma position">◎</button>
-  </div>
-
-  <section id="panel" class="panel">
-    <div class="panel-handle" id="panelHandle"><span></span></div>
-    <div class="panel-head">
-      <div>
-        <strong id="countLabel">0 client</strong>
-        <div id="gpsStatus" class="muted">Position : en attente…</div>
-      </div>
-      <label class="radius">
-        Rayon <output id="radiusOut">10 km</output>
-        <input id="radius" type="range" min="1" max="200" step="1" value="10">
-      </label>
+  <!-- Barre de recherche flottante -->
+  <div class="searchbar" role="search">
+    <button id="menuBtn" class="sb-icon" aria-label="Menu">
+      <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <input id="search" type="search" placeholder="Rechercher un client, une ville…" autocomplete="off" enterkeyhint="search">
+    <button id="clearSearch" class="sb-icon" aria-label="Effacer" hidden>
+      <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <div class="sb-avatar" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
     </div>
-    <label class="toggle"><input type="checkbox" id="onlyRadius" checked> Uniquement les clients dans le rayon</label>
-    <ul id="list" class="list"></ul>
+  </div>
+
+  <nav id="menu" class="menu" hidden>
+    <div class="menu-title">Base clients</div>
+    <button data-action="add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Ajouter un client</button>
+    <label class="menu-item"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Importer un fichier CSV<input id="csvInput" type="file" accept=".csv,text/csv,text/plain" hidden></label>
+    <button data-action="export"><svg viewBox="0 0 24 24"><path d="M12 20V9M7 14l5-5 5 5M5 4h14"/></svg>Exporter en CSV</button>
+    <button data-action="geocode"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg>Géocoder les adresses manquantes</button>
+    <button data-action="sample"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6A2 2 0 0 0 19 18l-5-9V3"/></svg>Charger des clients d'exemple</button>
+    <div class="menu-sep"></div>
+    <button data-action="clear" class="danger"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>Vider la base</button>
+  </nav>
+
+  <!-- Boutons flottants de la carte -->
+  <div class="fabs" id="fabs">
+    <button id="layerBtn" class="fab" aria-label="Changer de fond de carte" title="Plan / Satellite">
+      <svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>
+    </button>
+    <div class="fab-group desktop-only">
+      <button id="zoomIn" class="fab" aria-label="Zoom avant"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <button id="zoomOut" class="fab" aria-label="Zoom arrière"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+    </div>
+    <button id="locateBtn" class="fab fab-locate" aria-label="Suivre ma position" title="Suivre ma position">
+      <svg viewBox="0 0 24 24"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
+    </button>
+  </div>
+
+  <!-- Panneau (bottom sheet sur mobile, carte flottante sur ordinateur) -->
+  <section id="sheet" class="sheet" data-snap="half">
+    <div class="sheet-grab" id="sheetGrab"><span></span></div>
+
+    <!-- Vue liste -->
+    <div id="listView" class="view">
+      <div class="sheet-head">
+        <div>
+          <h1 id="title">Autour de vous</h1>
+          <div id="subtitle" class="sub">Recherche de votre position…</div>
+        </div>
+        <span id="gpsDot" class="gps-dot" title="État du GPS"></span>
+      </div>
+      <div class="chips" id="chips" role="radiogroup" aria-label="Rayon de recherche"></div>
+      <ul id="list" class="list"></ul>
+    </div>
+
+    <!-- Vue fiche client -->
+    <div id="detailView" class="view" hidden>
+      <div class="detail-top">
+        <button id="backBtn" class="round-btn" aria-label="Retour"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+        <button id="closeBtn" class="round-btn" aria-label="Fermer"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <div id="detail"></div>
+    </div>
   </section>
 
   <dialog id="clientDialog">
     <form method="dialog" id="clientForm">
+      <div class="dlg-grab"></div>
       <h2 id="dialogTitle">Nouveau client</h2>
       <input type="hidden" name="id">
-      <label>Nom *<input name="nom" required></label>
-      <label>Adresse<input name="adresse"></label>
+      <label>Nom *<input name="nom" required placeholder="Ex. Boulangerie Dupont"></label>
+      <label>Adresse<input name="adresse" placeholder="Numéro et rue"></label>
       <div class="row">
-        <label>Code postal<input name="code_postal" inputmode="numeric"></label>
+        <label class="w-35">Code postal<input name="code_postal" inputmode="numeric"></label>
         <label>Ville<input name="ville"></label>
       </div>
       <div class="row">
@@ -66,21 +103,23 @@
         <label>E-mail<input name="email" type="email"></label>
       </div>
       <label>Notes<textarea name="notes" rows="2"></textarea></label>
-      <div class="row">
-        <label>Latitude<input name="latitude" inputmode="decimal"></label>
-        <label>Longitude<input name="longitude" inputmode="decimal"></label>
-      </div>
-      <p class="muted small">Laissez latitude/longitude vides pour géocoder l'adresse automatiquement, ou utilisez « Ma position ».</p>
+      <details class="coords">
+        <summary>Coordonnées GPS (facultatif)</summary>
+        <div class="row">
+          <label>Latitude<input name="latitude" inputmode="decimal"></label>
+          <label>Longitude<input name="longitude" inputmode="decimal"></label>
+        </div>
+        <button type="button" id="useMyPos" class="link-btn">Utiliser ma position actuelle</button>
+        <p class="hint">Laissez vide pour localiser l'adresse automatiquement.</p>
+      </details>
       <div class="dialog-actions">
-        <button type="button" id="useMyPos">📍 Ma position</button>
-        <span class="spacer"></span>
-        <button value="cancel" formnovalidate>Annuler</button>
-        <button value="save" class="primary">Enregistrer</button>
+        <button value="cancel" formnovalidate class="btn ghost">Annuler</button>
+        <button value="save" class="btn primary">Enregistrer</button>
       </div>
     </form>
   </dialog>
 
-  <div id="toast" class="toast" hidden></div>
+  <div id="toast" class="toast" role="status" hidden></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
