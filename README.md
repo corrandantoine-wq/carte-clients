@@ -51,7 +51,7 @@ La sécurité repose sur les règles **Row Level Security** de la base :
 
 ### 3. Configurer la connexion
 1. Ouvrez **Authentication → URL Configuration**.
-   - *Site URL* : `https://corrandantoine-wq.github.io/calendrier-matchs/carte-clients/`
+   - *Site URL* : `https://corrandantoine-wq.github.io/carte-clients/`
    - *Redirect URLs* : ajoutez la même adresse.
 2. **Authentication → Sign In / Providers → Email** : laissez « Confirm email » activé.
 3. Facultatif mais conseillé : l'envoi d'e-mails intégré à Supabase est limité à quelques messages par heure. Pour une équipe, branchez le serveur d'e-mails de la société dans **Authentication → Emails → SMTP Settings**.
@@ -98,15 +98,15 @@ Une extraction d'ERP convient (Sage, Cegid, EBP, SAP, Odoo, Divalto…), en gén
 Exemple : `exemple-clients.csv`. Limite du géocodage : 200 000 lignes par fichier.
 
 ## Tests automatiques
-Ils sont lancés automatiquement sur GitHub à chaque modification (onglet **Actions**, workflow « Carte Clients – tests »).
+Ils sont lancés automatiquement sur GitHub à chaque modification (onglet **Actions**, workflow « Tests »).
 
 - **Unitaires** : 14 tests des modules `js/` (en moins d'une seconde).
   ```bash
-  cd carte-clients && npm run test:unit
+  npm run test:unit
   ```
 - **Interface** : 28 scénarios, rejoués sur mobile et sur ordinateur. Ils couvrent la connexion, l'accès refusé, l'import ERP (CSV et Excel), le ré-import sans doublon, les favoris, le rayon, la recherche, le trajet A → B, la corbeille, l'historique, les secteurs, HubSpot et l'administration. La base de données et les services externes sont simulés.
   ```bash
-  cd carte-clients && npm ci && npx playwright install chromium && npx playwright test
+  npm ci && npx playwright install chromium && npx playwright test
   ```
 - **Base de données** : 42 vérifications des règles d'accès sur un vrai PostgreSQL (collaborateur, administrateur, personne non autorisée, accès sans connexion).
   ```bash
@@ -115,6 +115,6 @@ Ils sont lancés automatiquement sur GitHub à chaque modification (onglet **Act
 
 ## Lancer en local
 ```bash
-cd carte-clients && python3 -m http.server 8000   # puis http://localhost:8000
+python3 -m http.server 8000   # puis http://localhost:8000
 ```
 Ajoutez `http://localhost:8000` aux *Redirect URLs* de Supabase pour tester la connexion en local.

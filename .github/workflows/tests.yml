@@ -1,0 +1,54 @@
+# Tests automatiques de Carte Clients : lancés à chaque modification de l'appli.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  interface:
+    name: Interface (tests unitaires + navigateur, mobile et ordinateur)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - name: Tests unitaires
+        run: npm run test:unit
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+      - name: Rapport en cas d'échec
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapport-playwright
+          path: playwright-report
+          retention-days: 7
+
+  base:
+    name: Base de données (règles de sécurité)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tests/db/run.sh
