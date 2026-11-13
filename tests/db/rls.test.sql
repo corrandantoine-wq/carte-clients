@@ -14,8 +14,8 @@ begin
   begin execute sql; exception when others then raise notice 'ok : % (refusé)', label; return; end;
   raise exception 'ÉCHEC : % aurait dû être refusé', label;
 end $$;
-create or replace function pg_temp.as_user(uid text, email text) returns void language plpgsql as $$
-begin perform set_config('request.jwt.claims', json_build_object('sub', uid, 'email', email)::text, false); end $$;
+create or replace function pg_temp.as_user(uid text, email text, aal text default 'aal2') returns void language plpgsql as $$
+begin perform set_config('request.jwt.claims', json_build_object('sub', uid, 'email', email, 'aal', aal)::text, false); end $$;
 
 insert into auth.users values
   ('00000000-0000-0000-0000-00000000000a', 'admin@soc.fr'),
@@ -116,6 +116,18 @@ reset role;
 delete from public.members where email = 'bob@soc.fr';
 update public.clients set assigned_to = null; insert into public.members values ('bob@soc.fr', 'user');
 set role authenticated;
+
+-- Double vérification des administrateurs
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a', 'admin@soc.fr', 'aal1');
+select pg_temp.check('admin sans double vérification : pas administrateur', not public.is_admin());
+select pg_temp.check('admin sans double vérification : aucun client visible', (select count(*) from public.clients) = 0);
+select pg_temp.check('admin sans double vérification : voit seulement sa propre ligne (pour connaître son rôle)', (select count(*) from public.members) = 1);
+select pg_temp.refused('admin sans double vérification : ajout d''un collaborateur', $$insert into public.members values ('x@soc.fr', 'admin')$$);
+select pg_temp.refused('admin sans double vérification : ajout d''un client', $$insert into public.clients (nom) values ('X')$$);
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b', 'bob@soc.fr', 'aal1');
+select pg_temp.check('collaborateur sans double vérification : accès normal', (select count(*) from public.clients) > 0);
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a', 'admin@soc.fr', 'aal2');
+select pg_temp.check('admin avec double vérification : accès complet', public.is_admin() and (select count(*) from public.members) = 2);
 
 -- Personne non autorisée
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000c', 'intrus@gmail.com');

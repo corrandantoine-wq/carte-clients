@@ -71,7 +71,11 @@ async function login(page, email = 'admin@soc.fr', password = 'motdepasse1', { e
   await page.fill('#authForm [name=email]', email);
   await page.fill('#authForm [name=password]', password);
   await page.click('#authSubmit');
-  if (expectApp) await expect(page.locator('#auth')).toBeHidden();
+  if (!expectApp) return;
+  // Administrateur : double vérification (code du faux Supabase : 123456).
+  await expect(page.locator('#auth').and(page.locator(':not([hidden])')).locator('#authMfa:not([hidden])').or(page.locator('#auth[hidden]'))).toHaveCount(1);
+  if (await page.locator('#authMfa').isVisible()) { await page.fill('#mfaCode', '123456'); await page.click('#mfaSubmit'); }
+  await expect(page.locator('#auth')).toBeHidden();
 }
 
 async function importFile(page, file) {
