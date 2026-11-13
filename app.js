@@ -1,42 +1,47 @@
-/* Carte Clients — affiche une base clients sur une carte et suit la position
- * de l'utilisateur en temps réel pour lister les clients les plus proches.
- * Données stockées localement dans le navigateur (localStorage). */
+/* Carte Clients — base clients commune sur une carte, avec suivi de la position
+ * en temps réel, comptes collaborateurs (Supabase), favoris personnels et
+ * données HubSpot sur chaque fiche. */
 (() => {
   'use strict';
 
-  const STORAGE_KEY = 'carte-clients:v1';
+  const LEGACY_KEY = 'carte-clients:v1';        // ancienne base stockée dans le téléphone
   const SETTINGS_KEY = 'carte-clients:settings';
   const MAX_LIST = 300;
   const RADII = [1, 2, 5, 10, 25, 50, 100, 0]; // 0 = tous
+  const COLS = 'id,code_client,nom,adresse,code_postal,ville,telephone,email,notes,lat,lng,hubspot_id,created_by';
 
   // ---------- État ----------
-  let clients = load(STORAGE_KEY, []);
-  const settings = Object.assign({ radius: 10, follow: true, layer: 'plan' }, load(SETTINGS_KEY, {}));
+  let clients = [];
+  let favorites = new Set();
+  const settings = Object.assign({ radius: 10, follow: true, layer: 'plan', favOnly: false }, load(SETTINGS_KEY, {}));
   if (settings.onlyRadius === false) settings.radius = 0;
   delete settings.onlyRadius;
-  let me = null;            // { lat, lng, accuracy }
+  let user = null;          // utilisateur Supabase connecté
+  let isAdmin = false;
+  let me = null;            // position { lat, lng, accuracy }
   let lastListPos = null;
   let watchId = null;
   let query = '';
   let selectedId = null;
+  let channel = null;
 
   // ---------- Utilitaires ----------
   function load(key, fallback) {
     try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
   }
-  function save() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(clients)); }
-    catch { toast("Impossible d'enregistrer : stockage du navigateur plein ou bloqué."); }
-  }
-  function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {} }
+  function store(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }
+  const saveSettings = () => store(SETTINGS_KEY, settings);
+  const cacheKey = () => `carte-clients:cache:${user?.id}`;
+  const saveCache = () => store(cacheKey(), { clients, favorites: [...favorites] });
   const $ = s => document.querySelector(s);
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   const num = v => { if (v === null || v === undefined || v === '') return null; const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : null; };
   const hasPos = c => Number.isFinite(c.lat) && Number.isFinite(c.lng);
   const fullAddress = c => [c.adresse, [c.code_postal, c.ville].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   const isDesktop = () => window.matchMedia('(min-width: 900px)').matches;
   const byId = id => clients.find(c => c.id === id);
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const canDelete = c => isAdmin || c.created_by === user?.id;
 
   function haversine(a, b) {
     const R = 6371, rad = Math.PI / 180;
@@ -59,7 +64,7 @@
 
   const STOP = new Set(['de', 'du', 'des', 'la', 'le', 'les', 'l', 'd', 'et', '&', 'à', 'au', 'aux', 'sarl', 'sas', 'eurl', 'sa']);
   function initials(name) {
-    const words = String(name || '?').split(/[\s'’\-]+/).filter(w => w && !STOP.has(w.toLowerCase()));
+    const words = String(name || '?').split(/[\s'’\-.@_]+/).filter(w => w && !STOP.has(w.toLowerCase()));
     return ((words[0]?.[0] || '?') + (words[1]?.[0] || '')).toUpperCase();
   }
   const PALETTE = ['#2563eb', '#7c3aed', '#db2777', '#ea580c', '#16a34a', '#0891b2', '#4f46e5', '#b45309', '#0d9488', '#c026d3'];
@@ -84,10 +89,30 @@
     users: '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/></svg>',
     search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>',
     radar: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>',
+    star: '<svg viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg>',
+    link: '<svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
   };
   const routeUrl = c => `https://www.google.com/maps/dir/?api=1&destination=${hasPos(c) ? `${c.lat},${c.lng}` : encodeURIComponent(fullAddress(c))}`;
   const wazeUrl = c => hasPos(c) ? `https://waze.com/ul?ll=${c.lat},${c.lng}&navigate=yes` : `https://waze.com/ul?q=${encodeURIComponent(fullAddress(c))}&navigate=yes`;
   const telUrl = c => `tel:${String(c.telephone).replace(/[^\d+]/g, '')}`;
+
+  // ---------- Connexion à Supabase ----------
+  const cfg = window.CARTE_CLIENTS_CONFIG || {};
+  const sb = cfg.supabaseUrl && cfg.supabaseAnonKey && window.supabase
+    ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, autoRefreshToken: true } })
+    : null;
+
+  // Exécute une requête Supabase et affiche une erreur lisible en cas d'échec.
+  async function q(promise, what) {
+    const { data, error } = await promise;
+    if (error) {
+      console.error(what, error);
+      const msg = error.code === '23505' && /code_client/.test(error.message) ? 'ce code client est déjà utilisé par un autre client' : (error.message || 'erreur réseau');
+      toast(`${what} : ${msg}`, 5000);
+      throw error;
+    }
+    return data;
+  }
 
   // ---------- Carte & fonds ----------
   const map = L.map('map', { zoomControl: false, maxZoom: 19, minZoom: 3 }).setView([46.6, 2.4], 6);
@@ -130,23 +155,25 @@
   const markers = new Map(); // id -> marker
 
   const iconCache = new Map();
-  function pinIcon(c, state) {
-    const key = initials(c.nom) + '|' + state;
+  function pinIcon(c, state, fav) {
+    const key = `${initials(c.nom)}|${state}|${fav}`;
     if (!iconCache.has(key)) {
-      iconCache.set(key, L.divIcon({ className: 'pin-wrap', html: `<div class="pin ${state}"><span>${esc(initials(c.nom))}</span></div>`,
+      iconCache.set(key, L.divIcon({ className: 'pin-wrap',
+        html: `<div class="pin ${state}"><span>${esc(initials(c.nom))}</span>${fav ? '<i class="pin-star">★</i>' : ''}</div>`,
         iconSize: [34, 34], iconAnchor: [17, 42] }));
     }
     return iconCache.get(key);
   }
   const stateOf = c => (c.id === selectedId ? 'selected' : inRadius(distTo(c)) ? 'near' : 'far');
+  const visibleOnMap = c => hasPos(c) && (!settings.favOnly || favorites.has(c.id));
 
   function renderMarkers() {
     cluster.clearLayers(); markers.clear();
     const layers = [];
     for (const c of clients) {
-      if (!hasPos(c)) continue;
+      if (!visibleOnMap(c)) continue;
       const st = stateOf(c);
-      const m = L.marker([c.lat, c.lng], { icon: pinIcon(c, st), title: c.nom, near: st !== 'far', riseOnHover: true });
+      const m = L.marker([c.lat, c.lng], { icon: pinIcon(c, st, favorites.has(c.id)), title: c.nom, near: st !== 'far', riseOnHover: true });
       m.on('click', () => select(c.id));
       markers.set(c.id, m); layers.push(m);
     }
@@ -157,7 +184,7 @@
     let changed = false;
     for (const c of clients) {
       const m = markers.get(c.id); if (!m) continue;
-      const st = stateOf(c), icon = pinIcon(c, st);
+      const st = stateOf(c), icon = pinIcon(c, st, favorites.has(c.id));
       m.options.near = st !== 'far';
       if (m.options.icon !== icon) { m.setIcon(icon); m.setZIndexOffset(st === 'selected' ? 2000 : st === 'near' ? 500 : 0); changed = true; }
     }
@@ -232,16 +259,25 @@
     map.fitBounds(bounds, { ...pad, maxZoom });
   }
 
-  // ---------- Rayon (chips) ----------
+  // ---------- Rayon & favoris (chips) ----------
   function renderChips() {
-    $('#chips').innerHTML = RADII.map(r => `<button class="chip" role="radio" data-r="${r}" aria-checked="${settings.radius === r}">${r ? `${r} km` : 'Tous'}</button>`).join('');
-    $('#chips [aria-checked="true"]')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+    $('#chips').innerHTML =
+      `<button class="chip fav" data-fav aria-pressed="${settings.favOnly}">${I.star}Favoris${favorites.size ? ` · ${favorites.size}` : ''}</button><span class="chip-sep"></span>` +
+      RADII.map(r => `<button class="chip" role="radio" data-r="${r}" aria-checked="${settings.radius === r}">${r ? `${r} km` : 'Tous'}</button>`).join('');
   }
   function setRadius(r) {
     settings.radius = r; saveSettings(); renderChips(); updateRadiusCircle(); refresh();
     if (me && r) fitVisible(radiusCircle.getBounds()); else fitAll();
   }
-  $('#chips').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) setRadius(+b.dataset.r); });
+  $('#chips').addEventListener('click', e => {
+    const b = e.target.closest('.chip'); if (!b) return;
+    if (b.hasAttribute('data-fav')) {
+      settings.favOnly = !settings.favOnly; saveSettings(); renderChips(); renderMarkers(); renderList();
+      if (settings.favOnly && !favorites.size) toast('Aucun favori : ouvrez une fiche client et touchez l’étoile.', 3500);
+      return;
+    }
+    setRadius(+b.dataset.r);
+  });
   function updateRadiusCircle() {
     if (!me || !settings.radius) { map.removeLayer(radiusCircle); return; }
     radiusCircle.setLatLng([me.lat, me.lng]).setRadius(settings.radius * 1000);
@@ -250,8 +286,9 @@
 
   // ---------- Liste ----------
   function matches(c) {
+    if (settings.favOnly && !favorites.has(c.id)) return false;
     if (!query) return true;
-    const hay = `${c.nom} ${c.adresse} ${c.code_postal} ${c.ville} ${c.telephone} ${c.email} ${c.notes}`.toLowerCase();
+    const hay = `${c.code_client || ''} ${c.nom} ${c.adresse} ${c.code_postal} ${c.ville} ${c.telephone} ${c.email} ${c.notes}`.toLowerCase();
     return query.split(/\s+/).every(w => hay.includes(w));
   }
   const emptyState = (icon, title, text, btn = '') => `<li class="empty"><div class="em-icon">${icon}</div><strong>${title}</strong>${text}${btn}</li>`;
@@ -269,18 +306,21 @@
     rows.sort((a, b) => (a.d ?? Infinity) - (b.d ?? Infinity) || String(a.c.nom).localeCompare(b.c.nom, 'fr'));
 
     const total = clients.length, s = n => (n > 1 ? 's' : '');
-    $('#title').textContent = query ? 'Résultats' : (settings.radius && me) ? 'Autour de vous' : 'Tous les clients';
-    $('#subtitle').textContent = query ? `${rows.length} client${s(rows.length)} trouvé${s(rows.length)}`
-      : !me ? `${total} client${s(total)} · ${watchId == null ? 'position indisponible' : 'recherche de votre position…'}`
-      : settings.radius ? `${nearCount} client${s(nearCount)} à moins de ${settings.radius} km · ${total} au total`
-      : `${total} client${s(total)} · triés par distance`;
+    const scope = settings.favOnly ? 'favori' : 'client';
+    $('#title').textContent = query ? 'Résultats' : settings.favOnly ? 'Mes favoris' : (settings.radius && me) ? 'Autour de vous' : 'Tous les clients';
+    const fr = v => v.toLocaleString('fr-FR');
+    $('#subtitle').textContent = query ? `${fr(rows.length)} client${s(rows.length)} trouvé${s(rows.length)}`
+      : !me ? `${fr(settings.favOnly ? favorites.size : total)} ${scope}${s(settings.favOnly ? favorites.size : total)} · ${watchId == null ? 'position indisponible' : 'recherche de votre position…'}`
+      : settings.radius ? `${fr(nearCount)} ${scope}${s(nearCount)} à moins de ${settings.radius} km · ${fr(settings.favOnly ? favorites.size : total)} au total`
+      : `${fr(rows.length)} ${scope}${s(rows.length)} · triés par distance`;
 
     const list = $('#list');
     if (!rows.length) {
       list.innerHTML = total === 0
-        ? emptyState(I.users, 'Aucun client pour l’instant', 'Importez votre fichier clients (CSV) ou essayez avec des données d’exemple.',
+        ? emptyState(I.users, 'La base est vide', 'Importez le fichier clients de la société (CSV), ou ajoutez un client depuis le menu.',
             '<div><button class="btn primary" data-empty="import">Importer un CSV</button> <button class="btn ghost" data-empty="sample">Exemple</button></div>')
         : query ? emptyState(I.search, 'Aucun résultat', 'Essayez un autre nom, une ville ou un code postal.')
+        : settings.favOnly && !favorites.size ? emptyState(I.star, 'Aucun favori', 'Ouvrez la fiche d’un client et touchez l’étoile pour l’ajouter ici.')
         : emptyState(I.radar, `Personne à moins de ${settings.radius} km`, 'Élargissez la zone de recherche.',
             '<div><button class="btn ghost" data-empty="wider">Élargir le rayon</button></div>');
       return;
@@ -289,7 +329,7 @@
       <li class="item" data-id="${esc(c.id)}">
         ${avatar(c)}
         <div class="info">
-          <div class="name">${esc(c.nom)}${hasPos(c) ? '' : '<span class="badge">non localisé</span>'}</div>
+          <div class="name">${esc(c.nom)}${favorites.has(c.id) ? `<span class="star" title="Favori">${I.star}</span>` : ''}${hasPos(c) ? '' : '<span class="badge">non localisé</span>'}</div>
           <div class="addr">${esc(fullAddress(c) || c.telephone || '')}</div>
         </div>
         <div class="meta">
@@ -312,11 +352,19 @@
   });
 
   function refresh() { renderList(); updateMarkerStates(); if (selectedId) renderDetail(); }
+  let renderTimer;
+  function scheduleFullRender() {
+    clearTimeout(renderTimer);
+    renderTimer = setTimeout(() => { renderMarkers(); renderChips(); refresh(); saveCache(); }, 250);
+  }
 
   // ---------- Fiche client ----------
   function renderDetail() {
     const c = byId(selectedId); if (!c) return closeDetail();
     const d = distTo(c);
+    const fav = favorites.has(c.id);
+    $('#favBtn').setAttribute('aria-pressed', fav);
+    $('#favBtn').setAttribute('aria-label', fav ? 'Retirer des favoris' : 'Ajouter aux favoris');
     const row = (icon, label, val, href) => !val ? '' : href
       ? `<a class="d-row" href="${esc(href)}"${href.startsWith('http') ? ' target="_blank" rel="noopener"' : ''}>${icon}<div><div class="lbl">${label}</div><div class="val">${esc(val)}</div></div></a>`
       : `<div class="d-row">${icon}<div><div class="lbl">${label}</div><div class="val">${esc(val)}</div></div></div>`;
@@ -335,11 +383,14 @@
         ${row(I.phone, 'Téléphone', c.telephone, c.telephone ? telUrl(c) : null)}
         ${row(I.mail, 'E-mail', c.email, c.email ? `mailto:${c.email}` : null)}
         ${row(I.note, 'Notes', c.notes)}
+        ${row(I.users, 'Code client', c.code_client)}
       </div>
+      <div id="crm" class="crm">${crmHtml(c)}</div>
       <div class="d-foot">
         <button class="btn ghost" data-act="edit">${I.edit}Modifier</button>
-        <button class="btn danger" data-act="delete">${I.trash}Supprimer</button>
+        ${canDelete(c) ? `<button class="btn danger" data-act="delete">${I.trash}Supprimer</button>` : ''}
       </div>`;
+    if (c.hubspot_id) loadCrm(c);
   }
 
   function select(id) {
@@ -365,14 +416,105 @@
   $('#closeBtn').addEventListener('click', () => { closeDetail(); if (!isDesktop()) setSnap('peek'); });
   map.on('click', () => { if (selectedId) closeDetail(); });
 
-  $('#detail').addEventListener('click', e => {
+  $('#detail').addEventListener('click', async e => {
     const act = e.target.closest('[data-act]')?.dataset.act;
     const c = byId(selectedId); if (!act || !c) return;
     if (act === 'edit') openForm(c);
-    if (act === 'delete' && confirm(`Supprimer « ${c.nom} » ?`)) {
-      clients = clients.filter(x => x !== c); save(); closeDetail(); renderMarkers(); renderList();
-      toast('Client supprimé');
+    if (act === 'delete' && confirm(`Supprimer « ${c.nom} » de la base commune ?\nIl disparaîtra pour tous les collaborateurs.`)) {
+      const rows = await q(sb.from('clients').delete().eq('id', c.id).select('id'), 'Suppression impossible');
+      if (!rows.length) return toast('Seul l’auteur de la fiche ou un administrateur peut la supprimer.', 4000);
+      clients = clients.filter(x => x.id !== c.id); favorites.delete(c.id);
+      closeDetail(); scheduleFullRender(); toast('Client supprimé');
     }
+    if (act === 'hs-link') openHubspotLink(c);
+    if (act === 'hs-unlink' && confirm('Retirer le lien avec la fiche HubSpot ?')) {
+      await updateClient(c.id, { hubspot_id: null }); renderDetail();
+    }
+    if (act === 'hs-retry') { crmCache.delete(c.hubspot_id); renderDetail(); }
+  });
+
+  // ---------- Favoris ----------
+  $('#favBtn').addEventListener('click', async () => {
+    const c = byId(selectedId); if (!c) return;
+    const on = !favorites.has(c.id);
+    on ? favorites.add(c.id) : favorites.delete(c.id); // affichage immédiat
+    const redraw = () => { renderDetail(); renderChips(); settings.favOnly ? renderMarkers() : updateMarkerStates(); renderList(); };
+    redraw();
+    try {
+      if (on) await q(sb.from('favorites').insert({ client_id: c.id }), 'Favori non enregistré');
+      else await q(sb.from('favorites').delete().eq('client_id', c.id), 'Favori non retiré');
+      toast(on ? 'Ajouté à vos favoris' : 'Retiré de vos favoris', 1400);
+      saveCache();
+    } catch {
+      on ? favorites.delete(c.id) : favorites.add(c.id);
+      redraw();
+    }
+  });
+
+  // ---------- HubSpot ----------
+  const crmCache = new Map(); // hubspot_id -> { at, data } | { at, error } | { loading }
+  async function hubspot(action, payload = {}) {
+    const { data, error } = await sb.functions.invoke('hubspot', { body: { action, ...payload } });
+    if (error) {
+      let msg = error.message;
+      try { msg = (await error.context.json()).error || msg; } catch {}
+      throw new Error(msg);
+    }
+    if (data?.error) throw new Error(data.error);
+    return data;
+  }
+  function crmHtml(c) {
+    const head = (extra = '') => `<div class="crm-head"><span class="hs-logo">H</span>Données HubSpot${extra}</div>`;
+    if (!c.hubspot_id) {
+      return head() + `<div class="crm-empty">Ce client n’est pas encore relié à une fiche HubSpot.</div>
+        <div class="crm-foot" style="justify-content:flex-start"><button class="btn ghost" data-act="hs-link">${I.link}Lier à HubSpot</button></div>`;
+    }
+    const st = crmCache.get(c.hubspot_id);
+    if (!st || st.loading) return head() + '<div class="crm-body"><div class="skeleton"></div><div class="skeleton" style="width:70%"></div><div class="skeleton" style="width:50%"></div></div>';
+    if (st.error) return head() + `<div class="crm-empty">Impossible de charger les données HubSpot : ${esc(st.error)}</div>
+      <div class="crm-foot"><button data-act="hs-retry">Réessayer</button>&nbsp;&nbsp;<button data-act="hs-unlink">Délier</button></div>`;
+    const d = st.data;
+    const rows = d.fields.map(f => `<div class="crm-row"><span class="k">${esc(f.label)}</span><span class="v">${esc(f.value || '—')}</span></div>`).join('');
+    return head(`<a href="${esc(d.url)}" target="_blank" rel="noopener">Ouvrir ↗</a>`) +
+      `<div class="crm-body">${rows || '<div class="crm-empty">Aucun champ configuré (menu → Champs HubSpot affichés).</div>'}</div>
+       <div class="crm-foot"><button data-act="hs-link">Changer</button>&nbsp;&nbsp;<button data-act="hs-unlink">Délier</button></div>`;
+  }
+  async function loadCrm(c) {
+    const id = c.hubspot_id, st = crmCache.get(id);
+    if (st && (st.loading || Date.now() - st.at < 5 * 60_000)) return;
+    crmCache.set(id, { loading: true });
+    try { crmCache.set(id, { at: Date.now(), data: await hubspot('get', { id }) }); }
+    catch (e) { crmCache.set(id, { at: Date.now(), error: e.message }); }
+    if (selectedId === c.id && byId(c.id)?.hubspot_id === id) $('#crm').innerHTML = crmHtml(byId(c.id));
+  }
+
+  const hsDlg = $('#hsDialog');
+  let hsTarget = null, hsTimer;
+  function openHubspotLink(c) {
+    hsTarget = c.id;
+    $('#hsSearch').value = c.nom;
+    $('#hsResults').innerHTML = '';
+    hsDlg.showModal();
+    searchHubspot();
+  }
+  async function searchHubspot() {
+    const term = $('#hsSearch').value.trim(), list = $('#hsResults');
+    if (term.length < 2) { list.innerHTML = '<li class="muted">Tapez au moins 2 lettres.</li>'; return; }
+    list.innerHTML = '<li class="muted">Recherche dans HubSpot…</li>';
+    try {
+      const { results } = await hubspot('search', { q: term });
+      if ($('#hsSearch').value.trim() !== term) return;
+      list.innerHTML = results.length
+        ? results.map(r => `<li class="click" data-hs="${esc(r.id)}"><div class="grow"><div class="t">${esc(r.name || '(sans nom)')}</div><div class="s">${esc(r.detail)}</div></div>${I.link}</li>`).join('')
+        : '<li class="muted">Aucune fiche trouvée.</li>';
+    } catch (e) { list.innerHTML = `<li class="muted">${esc(e.message)}</li>`; }
+  }
+  $('#hsSearch').addEventListener('input', () => { clearTimeout(hsTimer); hsTimer = setTimeout(searchHubspot, 350); });
+  $('#hsResults').addEventListener('click', async e => {
+    const li = e.target.closest('[data-hs]'); if (!li || !hsTarget) return;
+    await updateClient(hsTarget, { hubspot_id: li.dataset.hs });
+    hsDlg.close(); toast('Client relié à HubSpot');
+    if (selectedId === hsTarget) renderDetail();
   });
 
   // ---------- Géolocalisation temps réel ----------
@@ -406,6 +548,7 @@
   }
 
   function startWatch() {
+    if (!user) return;
     if (!('geolocation' in navigator)) { toast('Géolocalisation non disponible sur cet appareil.'); return; }
     if (watchId != null) return;
     watchId = navigator.geolocation.watchPosition(onPosition, onPositionError, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
@@ -427,92 +570,409 @@
   // Économie de batterie : GPS coupé quand l'appli est en arrière-plan.
   document.addEventListener('visibilitychange', () => { document.hidden ? stopWatch() : startWatch(); });
 
+  // ---------- Données (Supabase) ----------
+  const clean = c => ({ ...c, lat: num(c.lat), lng: num(c.lng) });
+
+  async function loadData() {
+    const cached = load(cacheKey(), null);
+    if (cached) {
+      clients = cached.clients || []; favorites = new Set(cached.favorites || []);
+      renderMarkers(); renderChips(); renderList();
+    }
+    try {
+      const all = [];
+      for (let from = 0; ; from += 1000) { // pagination (1000 lignes max par requête)
+        const page = await q(sb.from('clients').select(COLS).order('nom').range(from, from + 999), 'Chargement des clients');
+        all.push(...page);
+        if (page.length < 1000) break;
+      }
+      const favs = await q(sb.from('favorites').select('client_id'), 'Chargement des favoris');
+      clients = all.map(clean);
+      favorites = new Set(favs.map(f => f.client_id));
+      saveCache();
+      renderMarkers(); renderChips(); refresh();
+      if (!cached) fitAll();
+    } catch { if (cached) toast('Hors ligne : affichage de la dernière copie enregistrée.', 4000); }
+    offerLegacyImport();
+  }
+
+  // Temps réel : les ajouts / modifications des collègues apparaissent sans recharger.
+  function subscribe() {
+    channel?.unsubscribe();
+    channel = sb.channel('clients-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, ({ eventType, new: row, old }) => {
+        if (eventType === 'DELETE') { clients = clients.filter(c => c.id !== old.id); if (selectedId === old.id) closeDetail(); }
+        else {
+          const i = clients.findIndex(c => c.id === row.id);
+          i >= 0 ? (clients[i] = clean(row)) : clients.push(clean(row));
+        }
+        scheduleFullRender();
+      })
+      .subscribe();
+  }
+
+  async function updateClient(id, patch) {
+    const row = await q(sb.from('clients').update(patch).eq('id', id).select(COLS).single(), 'Modification impossible');
+    const i = clients.findIndex(c => c.id === id);
+    if (i >= 0) clients[i] = clean(row);
+    saveCache();
+    return clients[i];
+  }
+
+  async function insertClients(rows) {
+    const out = [];
+    for (let i = 0; i < rows.length; i += 500) {
+      const res = await q(sb.from('clients').insert(rows.slice(i, i + 500)).select(COLS), 'Enregistrement impossible');
+      out.push(...res.map(clean));
+    }
+    for (const c of out) if (!byId(c.id)) clients.push(c);
+    saveCache();
+    return out;
+  }
+
+  // Ancienne version : les clients étaient stockés dans le téléphone → proposer de les verser dans la base commune.
+  async function offerLegacyImport() {
+    const legacy = load(LEGACY_KEY, null);
+    if (!Array.isArray(legacy) || !legacy.length) return;
+    const ok = confirm(`${legacy.length} client(s) sont enregistrés sur cet appareil (ancienne version de l’appli).\n\nLes ajouter à la base commune ?`);
+    if (!ok) { localStorage.setItem(LEGACY_KEY + ':backup', localStorage.getItem(LEGACY_KEY)); localStorage.removeItem(LEGACY_KEY); return; }
+    try {
+      const added = await insertClients(legacy.map(c => toRow(c)));
+      localStorage.setItem(LEGACY_KEY + ':backup', localStorage.getItem(LEGACY_KEY));
+      localStorage.removeItem(LEGACY_KEY);
+      scheduleFullRender(); toast(`${added.length} clients ajoutés à la base commune.`, 4000);
+    } catch {}
+  }
+
+  const toRow = c => ({
+    code_client: String(c.code_client ?? '').trim() || null,
+    nom: c.nom, adresse: c.adresse || '', code_postal: c.code_postal || '', ville: c.ville || '',
+    telephone: c.telephone || '', email: c.email || '', notes: c.notes || '',
+    lat: num(c.lat), lng: num(c.lng),
+  });
+
   // ---------- Géocodage ----------
-  async function geocode(address) {
+  // Service public de géocodage (IGN / Base Adresse Nationale) : https://data.geopf.fr/geocodage
+  const GEO = 'https://data.geopf.fr/geocodage';
+  const MIN_SCORE = 0.5;
+  // Le résultat est-il cohérent avec le code postal fourni (même département) ?
+  const sameDept = (cp, found) => !cp || !found || String(cp).slice(0, 2) === String(found).slice(0, 2);
+
+  async function geocode(address, cp = '') {
     if (!address) return null;
-    try { // Base Adresse Nationale (France) — rapide, sans clé
-      const r = await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(address)}&limit=1`);
+    try {
+      const r = await fetch(`${GEO}/search?q=${encodeURIComponent(address)}&limit=1`);
       if (r.ok) {
         const f = (await r.json()).features?.[0];
-        if (f && f.properties.score > 0.4) return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] };
+        if (f && f.properties.score >= MIN_SCORE && sameDept(cp, f.properties.postcode)) return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] };
       }
     } catch {}
     try { // Repli international : Nominatim (OpenStreetMap), 1 requête/seconde max
-      await new Promise(res => setTimeout(res, 1100));
+      await sleep(1100);
       const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(address)}`, { headers: { 'Accept-Language': 'fr' } });
       if (r.ok) { const j = await r.json(); if (j[0]) return { lat: +j[0].lat, lng: +j[0].lon }; }
     } catch {}
     return null;
   }
 
-  let geocoding = false;
-  async function geocodeMissing() {
-    if (geocoding) return;
-    const todo = clients.filter(c => !hasPos(c) && fullAddress(c));
-    if (!todo.length) { toast('Tous les clients avec une adresse sont déjà localisés.'); return; }
-    geocoding = true;
-    let ok = 0;
-    for (let i = 0; i < todo.length; i++) {
-      toast(`Localisation des adresses… ${i + 1}/${todo.length}`, 60000);
-      const p = await geocode(fullAddress(todo[i]));
-      if (p) { Object.assign(todo[i], p); ok++; }
-      if (i % 10 === 9) { save(); renderMarkers(); renderList(); }
-      await new Promise(res => setTimeout(res, 120));
+  // Géocodage par lot : jusqu'à 5 000 adresses par envoi (le service accepte 200 000 lignes / 50 Mo).
+  async function geocodeBatch(list, onProgress = () => {}, mainLineOnly = false) {
+    const found = new Map();
+    const CHUNK = 5000;
+    for (let i = 0; i < list.length; i += CHUNK) {
+      const part = list.slice(i, i + CHUNK);
+      const line = a => (mainLineOnly ? String(a || '').split(',')[0] : a || '');
+      const csv = Papa.unparse(part.map(c => ({ id: c.id, adresse: line(c.adresse), code_postal: c.code_postal || '', ville: c.ville || '' })));
+      const fd = new FormData();
+      fd.append('data', new Blob([csv], { type: 'text/csv' }), 'adresses.csv');
+      for (const col of ['adresse', 'code_postal', 'ville']) fd.append('columns', col);
+      fd.append('postcode', 'code_postal');
+      let text = '';
+      for (let attempt = 0; attempt < 3 && !text; attempt++) {
+        try { const r = await fetch(`${GEO}/search/csv`, { method: 'POST', body: fd }); if (r.ok) text = await r.text(); else await sleep(1500); }
+        catch { await sleep(1500); }
+      }
+      if (text) {
+        for (const r of Papa.parse(text, { header: true, skipEmptyLines: true }).data) {
+          const lat = num(r.latitude), lng = num(r.longitude), score = num(r.result_score);
+          if (lat != null && lng != null && score >= MIN_SCORE && sameDept(r.code_postal, r.result_postcode)) found.set(r.id, { lat, lng });
+        }
+      }
+      onProgress(Math.min(i + CHUNK, list.length), list.length);
     }
-    geocoding = false;
-    save(); renderMarkers(); refresh();
-    toast(`${ok}/${todo.length} adresses localisées${ok < todo.length ? '. Complétez les autres à la main.' : '.'}`, 5000);
+    return found;
   }
 
-  // ---------- Import / export CSV ----------
-  const ALIASES = {
-    nom: ['nom', 'name', 'client', 'raison sociale', 'raison_sociale', 'societe', 'société', 'entreprise', 'company', 'enseigne'],
-    adresse: ['adresse', 'address', 'rue', 'street', 'adresse1', 'adresse 1'],
-    code_postal: ['code_postal', 'code postal', 'cp', 'zip', 'postcode', 'postal_code', 'codepostal'],
-    ville: ['ville', 'city', 'commune', 'localite', 'localité'],
-    telephone: ['telephone', 'téléphone', 'tel', 'tél', 'phone', 'mobile', 'portable'],
-    email: ['email', 'e-mail', 'mail', 'courriel'],
-    notes: ['notes', 'note', 'commentaire', 'commentaires', 'remarques', 'comment'],
-    lat: ['latitude', 'lat', 'y'],
-    lng: ['longitude', 'lng', 'lon', 'long', 'x'],
-    prenom: ['prenom', 'prénom', 'firstname', 'first name'],
-  };
-  const norm = s => String(s).trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  function mapHeaders(fields) {
-    const out = {};
-    for (const [key, names] of Object.entries(ALIASES)) {
-      const n = names.map(norm);
-      const f = fields.find(h => n.includes(norm(h)));
-      if (f) out[key] = f;
+  // Enregistre les coordonnées en base par paquets de 1 000.
+  async function saveCoords(found) {
+    const items = [...found].map(([id, p]) => ({ id, lat: p.lat, lng: p.lng }));
+    for (let i = 0; i < items.length; i += 1000) {
+      await q(sb.rpc('set_coords', { items: items.slice(i, i + 1000) }), 'Enregistrement des positions');
+    }
+    for (const { id, lat, lng } of items) { const c = byId(id); if (c) Object.assign(c, { lat, lng }); }
+    saveCache();
+  }
+
+  // Localise les clients sans coordonnées : par lot d'abord, puis un par un (étranger…) pour un petit reste.
+  let geocoding = false;
+  async function geocodeMissing(list = clients, onProgress) {
+    if (geocoding) return { ok: 0, total: 0 };
+    const todo = list.filter(c => !hasPos(c) && fullAddress(c));
+    if (!todo.length) { if (list === clients && !onProgress) toast('Tous les clients avec une adresse sont déjà localisés.'); return { ok: 0, total: 0 }; }
+    geocoding = true;
+    const report = onProgress || ((d, t) => toast(`Localisation des adresses… ${d}/${t}`, 60000));
+    try {
+      const found = await geocodeBatch(todo, (d) => report(Math.round(d * 0.8), todo.length));
+      // 2e passe sans le complément d'adresse (« Bâtiment B », « ZI »…), qui gêne souvent le géocodeur.
+      let rest = todo.filter(c => !found.has(c.id));
+      if (rest.length) for (const [id, pos] of await geocodeBatch(rest, () => report(Math.round(todo.length * 0.9), todo.length), true)) found.set(id, pos);
+      rest = todo.filter(c => !found.has(c.id));
+      if (rest.length && rest.length <= 30) {
+        for (const c of rest) { const p = await geocode(fullAddress({ ...c, adresse: String(c.adresse || '').split(',')[0] }), c.code_postal); if (p) found.set(c.id, p); }
+      }
+      await saveCoords(found);
+      report(todo.length, todo.length);
+      scheduleFullRender();
+      if (!onProgress) toast(`${found.size}/${todo.length} adresses localisées${found.size < todo.length ? '. Complétez les autres à la main.' : '.'}`, 5000);
+      return { ok: found.size, total: todo.length };
+    } catch { return { ok: 0, total: todo.length }; }
+    finally { geocoding = false; }
+  }
+
+  // ---------- Import (ERP, CSV, Excel) ----------
+  // Champs de l'appli et noms de colonnes habituels (ERP français et internationaux).
+  const FIELDS = [
+    { key: 'nom', label: 'Nom / raison sociale', req: true, alias: ['nom', 'name', 'raison sociale', 'raison_sociale', 'nom client', 'nom du client', 'client', 'societe', 'société', 'entreprise', 'company', 'company name', 'enseigne', 'intitule', 'intitulé', 'intitule tiers', 'libelle', 'libellé', 'libelle tiers', 'denomination', 'dénomination', 'name 1', 'name1', 'customer name', 'nom raison sociale', 'designation', 'désignation'] },
+    { key: 'code_client', label: 'Code client', key2: true, alias: ['code client', 'code_client', 'n client', 'no client', 'numero client', 'num client', 'numéro client', 'ref client', 'reference client', 'référence client', 'code tiers', 'n compte tiers', 'compte tiers', 'numero de compte', 'n compte', 'compte', 'code', 'id client', 'client id', 'customer', 'customer number', 'customer id', 'internal reference', 'reference', 'référence', 'ref', 'numero', 'numéro', 'matricule', 'identifiant'] },
+    { key: 'adresse', label: 'Adresse', alias: ['adresse', 'adresse 1', 'adresse1', 'adresse ligne 1', 'adresse postale', 'adresse de facturation', 'adresse facturation', 'address', 'address 1', 'address line 1', 'street', 'rue', 'voie', 'billing street'] },
+    { key: 'adresse2', label: 'Complément d’adresse', alias: ['adresse 2', 'adresse2', 'adresse ligne 2', 'complement', 'complément', 'complement adresse', 'complément d adresse', 'complement d adresse', 'street2', 'address 2', 'address line 2'] },
+    { key: 'code_postal', label: 'Code postal', alias: ['code postal', 'code_postal', 'codepostal', 'cp', 'zip', 'zip code', 'postcode', 'postal code', 'postal_code', 'code postal facturation'] },
+    { key: 'ville', label: 'Ville', alias: ['ville', 'city', 'commune', 'localite', 'localité', 'ville facturation', 'bureau distributeur'] },
+    { key: 'telephone', label: 'Téléphone', alias: ['telephone', 'téléphone', 'tel', 'tél', 'telephone 1', 'tel 1', 'téléphone fixe', 'telephone fixe', 'phone', 'phone number', 'mobile', 'portable', 'gsm', 'standard'] },
+    { key: 'email', label: 'E-mail', alias: ['email', 'e mail', 'mail', 'courriel', 'adresse e mail', 'adresse mail', 'email address'] },
+    { key: 'notes', label: 'Notes', alias: ['notes', 'note', 'commentaire', 'commentaires', 'remarques', 'remarque', 'comment', 'observations', 'observation'] },
+    { key: 'lat', label: 'Latitude', alias: ['latitude', 'lat', 'y', 'gps latitude'] },
+    { key: 'lng', label: 'Longitude', alias: ['longitude', 'lng', 'lon', 'long', 'x', 'gps longitude'] },
+    { key: 'hubspot_id', label: 'ID HubSpot', alias: ['hubspot id', 'hubspot_id', 'id hubspot', 'record id', 'company id', 'id de fiche d informations'] },
+    { key: 'prenom', label: 'Prénom (si clients particuliers)', alias: ['prenom', 'prénom', 'firstname', 'first name'] },
+  ];
+  // Normalise un nom de colonne : minuscules, sans accents ni ponctuation.
+  const norm = s => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  const MAPPING_KEY = 'carte-clients:mapping';
+
+  function guessMapping(headers) {
+    const saved = load(MAPPING_KEY, {})[headers.map(norm).join('|')];
+    if (saved) return saved;
+    const used = new Set(), out = {};
+    // Les correspondances exactes d'abord, champ par champ, dans l'ordre de la liste d'alias.
+    for (const f of FIELDS) {
+      for (const a of f.alias.map(norm)) {
+        const i = headers.findIndex((h, j) => !used.has(j) && norm(h) === a);
+        if (i >= 0) { out[f.key] = i; used.add(i); break; }
+      }
     }
     return out;
   }
 
-  function importCsv(file) {
-    Papa.parse(file, {
-      header: true, skipEmptyLines: true,
-      complete: ({ data, meta }) => {
-        const h = mapHeaders(meta.fields || []);
-        if (!h.nom && !h.adresse) { toast('Colonnes non reconnues : il faut au moins « nom » ou « adresse ».', 6000); return; }
-        const added = data.map(row => {
-          const get = k => (h[k] ? String(row[h[k]] ?? '').trim() : '');
-          const nom = [get('prenom'), get('nom')].filter(Boolean).join(' ') || get('adresse');
-          return { id: uid(), nom, adresse: get('adresse'), code_postal: get('code_postal'), ville: get('ville'),
-            telephone: get('telephone'), email: get('email'), notes: get('notes'), lat: num(get('lat')), lng: num(get('lng')) };
-        }).filter(c => c.nom);
-        clients = clients.concat(added);
-        save(); renderMarkers(); renderList(); if (!me) fitAll();
-        const missing = added.filter(c => !hasPos(c)).length;
-        toast(`${added.length} clients importés${missing ? `, ${missing} à localiser…` : '.'}`, 4000);
-        if (missing) geocodeMissing();
-      },
-      error: e => toast('Erreur de lecture du CSV : ' + e.message, 6000),
-    });
+  // Lit le fichier : Excel (.xlsx/.xls) ou texte (CSV) en UTF-8 ou en encodage Windows.
+  async function readTable(file) {
+    if (/\.xlsx?$/i.test(file.name)) {
+      if (!window.XLSX) await new Promise((ok, ko) => {
+        const s = Object.assign(document.createElement('script'), { src: 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js', onload: ok, onerror: ko });
+        document.head.appendChild(s);
+      });
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      return { rows: XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '', blankrows: false }), encoding: `Excel, feuille « ${wb.SheetNames[0]} »` };
+    }
+    const buf = await file.arrayBuffer();
+    let text, encoding = 'UTF-8';
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+    catch { text = new TextDecoder('windows-1252').decode(buf); encoding = 'Windows (accents convertis)'; }
+    return { rows: Papa.parse(text, { skipEmptyLines: 'greedy' }).data, encoding };
   }
 
+  // Corrige les pertes habituelles d'Excel : zéros de tête des codes postaux et des téléphones.
+  function fixCp(v) { v = String(v ?? '').trim(); return /^\d{4}$/.test(v) ? '0' + v : v; }
+  function fixTel(v) { v = String(v ?? '').trim(); return /^[1-9]\d{8}$/.test(v) ? '0' + v : v; }
+
+  const imp = { headers: [], data: [], mapping: {}, file: '' };
+  // « 1 client ajouté », « 2 clients ajoutés »
+  const pl = (v, one, many) => `${v.toLocaleString('fr-FR')} ${v > 1 ? many : one}`;
+  const impDlg = $('#importDialog');
+
+  async function openImport(file) {
+    let table;
+    try { table = await readTable(file); } catch (e) { return toast('Impossible de lire ce fichier : ' + (e.message || e), 6000); }
+    const rows = (table.rows || []).filter(r => r.some(v => String(v ?? '').trim()));
+    if (rows.length < 2) return toast('Le fichier ne contient pas de lignes de clients.', 5000);
+    const seen = {};
+    imp.headers = rows[0].map((h, i) => { h = String(h ?? '').trim() || `Colonne ${i + 1}`; seen[h] = (seen[h] || 0) + 1; return seen[h] > 1 ? `${h} (${seen[h]})` : h; });
+    imp.data = rows.slice(1);
+    imp.mapping = guessMapping(imp.headers);
+    imp.file = file.name;
+    $('#impFileInfo').textContent = `${file.name} · ${imp.data.length.toLocaleString('fr-FR')} lignes · ${imp.headers.length} colonnes · ${table.encoding}`;
+    $('#impMap').hidden = false; $('#impRun').hidden = true;
+    $('#impGo').hidden = false; $('#impGo').disabled = false; $('#impGo').textContent = 'Importer';
+    $('#impCancel').textContent = 'Annuler';
+    renderMapping();
+    impDlg.showModal();
+  }
+
+  function renderMapping() {
+    const opts = ['<option value="">— Ignorer —</option>', ...imp.headers.map((h, i) => `<option value="${i}">${esc(h)}</option>`)].join('');
+    $('#impFields').innerHTML = FIELDS.map(f => `
+      <label class="${f.req ? 'req' : ''}${f.key2 ? ' key' : ''}"><span>${esc(f.label)}</span>
+        <select data-field="${f.key}" class="${imp.mapping[f.key] != null ? 'set' : ''}">${opts}</select>
+      </label>`).join('');
+    for (const sel of $('#impFields').querySelectorAll('select')) sel.value = imp.mapping[sel.dataset.field] ?? '';
+    renderPreview();
+  }
+  $('#impFields').addEventListener('change', e => {
+    const sel = e.target.closest('select'); if (!sel) return;
+    if (sel.value === '') delete imp.mapping[sel.dataset.field]; else imp.mapping[sel.dataset.field] = +sel.value;
+    sel.classList.toggle('set', sel.value !== '');
+    renderPreview();
+  });
+
+  // Transforme une ligne du fichier en client, avec uniquement les champs choisis.
+  function rowToClient(r) {
+    const m = imp.mapping, get = k => (m[k] != null ? String(r[m[k]] ?? '').trim() : '');
+    const c = {};
+    const nom = [get('prenom'), get('nom')].filter(Boolean).join(' ');
+    c.nom = nom || get('adresse');
+    if (m.code_client != null) c.code_client = get('code_client') || null;
+    if (m.adresse != null || m.adresse2 != null) c.adresse = [get('adresse'), get('adresse2')].filter(Boolean).join(', ');
+    if (m.code_postal != null) c.code_postal = fixCp(get('code_postal'));
+    if (m.ville != null) c.ville = get('ville');
+    if (m.telephone != null) c.telephone = fixTel(get('telephone'));
+    if (m.email != null) c.email = get('email');
+    if (m.notes != null) c.notes = get('notes');
+    if (m.lat != null && m.lng != null) { c.lat = num(get('lat')); c.lng = num(get('lng')); }
+    if (m.hubspot_id != null) c.hubspot_id = /^\d+$/.test(get('hubspot_id')) ? get('hubspot_id') : null;
+    return c;
+  }
+
+  // Prépare l'import : dédoublonne par code client et sépare nouveaux / mis à jour / sans code.
+  function planImport() {
+    const byCode = new Map(clients.filter(c => c.code_client).map(c => [c.code_client, c]));
+    const inFile = new Map(), noCode = [];
+    let skipped = 0;
+    for (const r of imp.data) {
+      const c = rowToClient(r);
+      if (!c.nom) { skipped++; continue; }
+      if (c.code_client) inFile.set(c.code_client, c); else noCode.push(c);
+    }
+    const updates = [], creates = [];
+    for (const [code, c] of inFile) (byCode.has(code) ? updates : creates).push(c);
+    return { byCode, updates, creates, noCode, skipped, dupInFile: imp.data.length - skipped - noCode.length - inFile.size };
+  }
+
+  function renderPreview() {
+    const shown = FIELDS.filter(f => imp.mapping[f.key] != null);
+    $('#impPreview').innerHTML = !shown.length ? '<tr><td>Aucune colonne choisie.</td></tr>' :
+      `<thead><tr>${shown.map(f => `<th>${esc(f.label)}</th>`).join('')}</tr></thead><tbody>` +
+      imp.data.slice(0, 5).map(r => `<tr>${shown.map(f => `<td>${esc(String(r[imp.mapping[f.key]] ?? ''))}</td>`).join('')}</tr>`).join('') + '</tbody>';
+    const sum = $('#impSummary'), n = v => v.toLocaleString('fr-FR');
+    if (imp.mapping.nom == null && imp.mapping.adresse == null) {
+      sum.className = 'imp-summary warn'; sum.textContent = 'Choisissez au moins la colonne « Nom / raison sociale ».';
+      $('#impGo').disabled = true; return;
+    }
+    $('#impGo').disabled = false;
+    const p = planImport(), parts = [];
+    if (p.creates.length + p.noCode.length) parts.push(`<b>${pl(p.creates.length + p.noCode.length, 'nouveau client', 'nouveaux clients')}</b>`);
+    if (p.updates.length) parts.push(`<b>${pl(p.updates.length, 'client déjà présent mis à jour', 'clients déjà présents mis à jour')}</b> (même code client)`);
+    if (p.dupInFile > 0) parts.push(pl(p.dupInFile, 'ligne en double dans le fichier ignorée', 'lignes en double dans le fichier ignorées'));
+    if (p.skipped) parts.push(pl(p.skipped, 'ligne sans nom ignorée', 'lignes sans nom ignorées'));
+    let warn = '';
+    if (imp.mapping.code_client == null) warn = '<br>⚠️ Sans colonne « Code client », un nouvel import du même fichier créera des doublons.';
+    sum.className = 'imp-summary' + (warn ? ' warn' : '');
+    sum.innerHTML = parts.join(' · ') + warn;
+  }
+
+  function impStep(i, state, text) {
+    const li = $('#impSteps').children[i];
+    li.className = state; if (text) li.textContent = text;
+  }
+  const impBar = pct => { $('#impBar').style.width = Math.round(pct) + '%'; };
+
+  $('#impGo').addEventListener('click', async () => {
+    const p = planImport(), total = p.updates.length + p.creates.length + p.noCode.length;
+    if (!total) return toast('Aucune ligne à importer.');
+    // Mémorise la correspondance des colonnes pour le prochain import du même format.
+    const maps = load(MAPPING_KEY, {}); maps[imp.headers.map(norm).join('|')] = imp.mapping; store(MAPPING_KEY, maps);
+
+    $('#impMap').hidden = true; $('#impRun').hidden = false; $('#impGo').hidden = true; $('#impCancel').textContent = 'Fermer';
+    $('#impResult').textContent = '';
+    $('#impSteps').innerHTML = '<li>Enregistrement des clients</li><li>Localisation des adresses</li><li>Terminé</li>';
+    impBar(0);
+    impDlg.dataset.busy = '1';
+    const n = v => v.toLocaleString('fr-FR');
+    try {
+      // 1. Envoi : mise à jour par code client, sinon ajout.
+      impStep(0, 'on');
+      const prep = c => {
+        const old = p.byCode.get(c.code_client);
+        if (!('lat' in c)) { // pas de coordonnées dans le fichier : on garde celles connues si l'adresse n'a pas changé
+          const same = old && ['adresse', 'code_postal', 'ville'].every(k => !(k in c) || (c[k] || '') === (old[k] || ''));
+          c.lat = same ? old.lat : null; c.lng = same ? old.lng : null;
+        }
+        if ('hubspot_id' in c && !c.hubspot_id && old?.hubspot_id) c.hubspot_id = old.hubspot_id; // ne pas perdre un lien existant
+        return c;
+      };
+      // Clients déjà connus : les notes saisies dans l'appli ne sont jamais remplacées par celles de l'ERP.
+      const updates = p.updates.map(c => { c = prep(c); delete c.notes; return c; });
+      const creates = p.creates.map(prep);
+      const plain = p.noCode.map(c => ({ ...c, code_client: null }));
+      const saved = [];
+      const BATCH = 500;
+      let done = 0;
+      for (const group of [updates, creates]) { // chaque envoi doit avoir les mêmes colonnes
+        for (let i = 0; i < group.length; i += BATCH) {
+          const res = await q(sb.from('clients').upsert(group.slice(i, i + BATCH), { onConflict: 'code_client' }).select(COLS), 'Import');
+          saved.push(...res.map(clean)); done += res.length;
+          impStep(0, 'on', `Enregistrement des clients… ${n(done)}/${n(total)}`); impBar(done / total * 50);
+        }
+      }
+      for (let i = 0; i < plain.length; i += BATCH) {
+        const res = await q(sb.from('clients').insert(plain.slice(i, i + BATCH)).select(COLS), 'Import');
+        saved.push(...res.map(clean)); done += res.length;
+        impStep(0, 'on', `Enregistrement des clients… ${n(done)}/${n(total)}`); impBar(done / total * 50);
+      }
+      for (const c of saved) { const i = clients.findIndex(x => x.id === c.id); i >= 0 ? (clients[i] = c) : clients.push(c); }
+      saveCache(); scheduleFullRender();
+      impStep(0, 'done', pl(saved.length, 'client enregistré', 'clients enregistrés'));
+
+      // 2. Localisation par lot des adresses sans coordonnées.
+      const toLocate = saved.filter(c => !hasPos(c) && fullAddress(c));
+      let geo = { ok: 0, total: 0 };
+      if (toLocate.length) {
+        impStep(1, 'on', `Localisation de ${n(toLocate.length)} adresses…`);
+        geo = await geocodeMissing(toLocate, (d, t) => { impStep(1, 'on', `Localisation des adresses… ${n(d)}/${n(t)}`); impBar(50 + d / t * 50); });
+        impStep(1, 'done', `${n(geo.ok)}/${pl(geo.total, 'adresse localisée', 'adresses localisées')}`);
+      } else impStep(1, 'done', 'Toutes les adresses étaient déjà localisées');
+      impBar(100);
+      impStep(2, 'done', 'Import terminé');
+      const created = p.creates.length + p.noCode.length;
+      const miss = geo.total - geo.ok;
+      $('#impResult').innerHTML = `<b>${pl(created, 'client ajouté', 'clients ajoutés')}</b> · <b>${pl(p.updates.length, 'mis à jour', 'mis à jour')}</b>` +
+        (miss > 0 ? `<br>${miss > 1 ? `${n(miss)} adresses n’ont pas pu être localisées` : 'Une adresse n’a pas pu être localisée'} : retrouvez ${miss > 1 ? 'ces clients' : 'ce client'} dans la liste avec le badge « non localisé » pour corriger.` : '');
+      $('#impResult').className = 'imp-summary' + (geo.total > geo.ok ? ' warn' : '');
+      setTimeout(() => { if (!me) fitAll(); }, 400);
+    } catch {
+      const cur = [...$('#impSteps').children].findIndex(li => li.className === 'on');
+      if (cur >= 0) impStep(cur, 'err');
+      $('#impResult').className = 'imp-summary warn';
+      $('#impResult').textContent = 'L’import a été interrompu. Les clients déjà envoyés sont enregistrés : relancez le même fichier pour terminer (les clients ayant un code ne seront pas dupliqués).';
+    } finally { delete impDlg.dataset.busy; }
+  });
+  impDlg.addEventListener('cancel', e => { if (impDlg.dataset.busy) e.preventDefault(); });
+  impDlg.addEventListener('click', e => { if (impDlg.dataset.busy && (e.target === impDlg || e.target.closest('[data-close]'))) e.stopImmediatePropagation(); }, true);
+
   function exportCsv() {
-    const rows = clients.map(c => ({ nom: c.nom, adresse: c.adresse, code_postal: c.code_postal, ville: c.ville,
-      telephone: c.telephone, email: c.email, notes: c.notes, latitude: c.lat ?? '', longitude: c.lng ?? '' }));
+    const rows = clients.map(c => ({ code_client: c.code_client ?? '', nom: c.nom, adresse: c.adresse, code_postal: c.code_postal, ville: c.ville,
+      telephone: c.telephone, email: c.email, notes: c.notes, latitude: c.lat ?? '', longitude: c.lng ?? '',
+      hubspot_id: c.hubspot_id ?? '', favori: favorites.has(c.id) ? 'oui' : '' }));
     const csv = Papa.unparse(rows, { delimiter: ';' });
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
     const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `clients-${new Date().toISOString().slice(0, 10)}.csv` });
@@ -520,12 +980,12 @@
   }
 
   async function loadSample() {
-    try { const r = await fetch('exemple-clients.csv'); importCsv(new File([await r.blob()], 'exemple.csv')); }
+    try { const r = await fetch('exemple-clients.csv'); openImport(new File([await r.blob()], 'exemple-clients.csv')); }
     catch { toast('Impossible de charger le fichier d’exemple.'); }
   }
 
   function fitAll() {
-    const pts = clients.filter(hasPos).map(c => [c.lat, c.lng]);
+    const pts = clients.filter(visibleOnMap).map(c => [c.lat, c.lng]);
     if (me) pts.push([me.lat, me.lng]);
     if (pts.length) fitVisible(L.latLngBounds(pts), 14);
   }
@@ -536,7 +996,7 @@
     form.reset();
     $('#dialogTitle').textContent = c ? 'Modifier le client' : 'Nouveau client';
     const v = c || {};
-    for (const k of ['id', 'nom', 'adresse', 'code_postal', 'ville', 'telephone', 'email', 'notes']) form.elements[k].value = v[k] ?? '';
+    for (const k of ['id', 'code_client', 'nom', 'adresse', 'code_postal', 'ville', 'telephone', 'email', 'notes']) form.elements[k].value = v[k] ?? '';
     const ll = latlng || (hasPos(v) ? v : null);
     form.elements.latitude.value = ll ? (+ll.lat).toFixed(6) : '';
     form.elements.longitude.value = ll ? (+ll.lng).toFixed(6) : '';
@@ -547,33 +1007,117 @@
     if (!me) { toast('Position pas encore disponible.'); return; }
     form.elements.latitude.value = me.lat.toFixed(6); form.elements.longitude.value = me.lng.toFixed(6);
   });
-  dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close('cancel'); }); // clic sur le fond
+  for (const d of document.querySelectorAll('dialog')) {
+    d.addEventListener('click', e => { if (e.target === d || e.target.closest('[data-close]')) d.close('cancel'); });
+  }
   dlg.addEventListener('close', async () => {
     if (dlg.returnValue !== 'save') return;
     const f = form.elements;
-    const data = { nom: f.nom.value.trim(), adresse: f.adresse.value.trim(), code_postal: f.code_postal.value.trim(),
+    const data = toRow({ code_client: f.code_client.value, nom: f.nom.value.trim(), adresse: f.adresse.value.trim(), code_postal: f.code_postal.value.trim(),
       ville: f.ville.value.trim(), telephone: f.telephone.value.trim(), email: f.email.value.trim(), notes: f.notes.value.trim(),
-      lat: num(f.latitude.value), lng: num(f.longitude.value) };
+      lat: f.latitude.value, lng: f.longitude.value });
     if (!data.nom) return;
-    let c = byId(f.id.value);
-    if (c) {
-      const addrChanged = fullAddress(c) !== fullAddress(data);
-      const posUnchanged = c.lat === data.lat && c.lng === data.lng;
-      Object.assign(c, data);
-      if (addrChanged && posUnchanged) { c.lat = c.lng = null; } // adresse modifiée → re-géocoder
-    } else { c = { id: uid(), ...data }; clients.push(c); }
-    if (!hasPos(c) && fullAddress(c)) {
+    const old = byId(f.id.value);
+    // Adresse modifiée sans toucher aux coordonnées → on relocalise.
+    if (old && fullAddress(old) !== fullAddress(data) && old.lat === data.lat && old.lng === data.lng) { data.lat = data.lng = null; }
+    if (!hasPos(data) && fullAddress(data)) {
       toast('Localisation de l’adresse…');
-      const p = await geocode(fullAddress(c));
-      if (p) Object.assign(c, p); else toast('Adresse introuvable : saisissez les coordonnées GPS.', 5000);
+      const p = await geocode(fullAddress(data), data.code_postal);
+      if (p) Object.assign(data, p); else toast('Adresse introuvable : saisissez les coordonnées GPS.', 5000);
     }
-    save(); renderMarkers(); renderList();
-    toast('Client enregistré', 1500);
-    select(c.id);
+    try {
+      const c = old ? await updateClient(old.id, data) : (await insertClients([data]))[0];
+      scheduleFullRender();
+      toast('Client enregistré', 1500);
+      setTimeout(() => select(c.id), 300);
+    } catch {}
   });
 
   // Appui long / clic droit sur la carte → ajouter un client à cet endroit.
-  map.on('contextmenu', e => openForm(null, e.latlng));
+  map.on('contextmenu', e => { if (user) openForm(null, e.latlng); });
+
+  // ---------- Administration ----------
+  const membersDlg = $('#membersDialog');
+  async function renderMembers() {
+    const list = $('#membersList');
+    list.innerHTML = '<li class="muted">Chargement…</li>';
+    try {
+      const rows = await q(sb.from('members').select('email,role').order('email'), 'Chargement des collaborateurs');
+      const mine = user.email.toLowerCase();
+      list.innerHTML = rows.map(m => `
+        <li data-email="${esc(m.email)}">
+          <div class="avatar sm" style="background:${colorFor(m.email)}">${esc(initials(m.email))}</div>
+          <div class="grow"><div class="t">${esc(m.email)}${m.email === mine ? ' <span class="s">(vous)</span>' : ''}</div></div>
+          <select data-role ${m.email === mine ? 'disabled' : ''}>
+            <option value="user"${m.role === 'user' ? ' selected' : ''}>Collaborateur</option>
+            <option value="admin"${m.role === 'admin' ? ' selected' : ''}>Admin</option>
+          </select>
+          ${m.email === mine ? '' : `<button class="icon-del" data-del aria-label="Retirer">${I.trash}</button>`}
+        </li>`).join('');
+    } catch { list.innerHTML = '<li class="muted">Impossible de charger la liste.</li>'; }
+  }
+  $('#memberForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const f = e.target.elements, email = f.email.value.trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('Adresse e-mail invalide.');
+    try {
+      await q(sb.from('members').upsert({ email, role: f.role.value }), 'Ajout impossible');
+      f.email.value = ''; toast(`${email} peut maintenant créer son compte.`, 3500); renderMembers();
+    } catch {}
+  });
+  $('#membersList').addEventListener('change', async e => {
+    const sel = e.target.closest('[data-role]'); if (!sel) return;
+    const email = sel.closest('li').dataset.email;
+    try { await q(sb.from('members').update({ role: sel.value }).eq('email', email), 'Modification impossible'); toast('Rôle mis à jour', 1500); }
+    catch { renderMembers(); }
+  });
+  $('#membersList').addEventListener('click', async e => {
+    if (!e.target.closest('[data-del]')) return;
+    const email = e.target.closest('li').dataset.email;
+    if (!confirm(`Retirer l’accès de ${email} ?`)) return;
+    try { await q(sb.from('members').delete().eq('email', email), 'Suppression impossible'); renderMembers(); } catch {}
+  });
+
+  const fieldsDlg = $('#fieldsDialog');
+  let allProps = [], chosen = [];
+  async function openFields() {
+    fieldsDlg.showModal();
+    const list = $('#fieldsList');
+    list.innerHTML = '<li class="muted">Chargement des champs HubSpot…</li>';
+    try {
+      const [cur, props] = await Promise.all([
+        q(sb.from('crm_fields').select('property,label,position').order('position'), 'Chargement'),
+        hubspot('properties'),
+      ]);
+      chosen = cur.map(f => f.property);
+      allProps = props.properties;
+      renderFields();
+    } catch (e) { list.innerHTML = `<li class="muted">${esc(e.message || 'Erreur')}</li>`; }
+  }
+  function renderFields() {
+    const term = norm($('#fieldsSearch').value);
+    const items = allProps.filter(p => !term || norm(p.label + ' ' + p.name).includes(term))
+      .sort((a, b) => (chosen.includes(b.name) - chosen.includes(a.name)) || a.label.localeCompare(b.label, 'fr'));
+    $('#fieldsList').innerHTML = items.slice(0, 300).map(p => `
+      <li><label style="display:flex;gap:12px;align-items:center;width:100%;cursor:pointer">
+        <input type="checkbox" value="${esc(p.name)}" ${chosen.includes(p.name) ? 'checked' : ''}>
+        <span class="grow"><span class="t">${esc(p.label)}</span><br><span class="s">${esc(p.name)}</span></span>
+      </label></li>`).join('') || '<li class="muted">Aucun champ.</li>';
+  }
+  $('#fieldsSearch').addEventListener('input', renderFields);
+  $('#fieldsList').addEventListener('change', e => {
+    const v = e.target.value; if (!v) return;
+    chosen = e.target.checked ? [...chosen, v] : chosen.filter(x => x !== v);
+  });
+  $('#fieldsSave').addEventListener('click', async () => {
+    const rows = chosen.map((p, i) => ({ property: p, label: allProps.find(x => x.name === p)?.label || p, position: i + 1 }));
+    try {
+      await q(sb.from('crm_fields').delete().neq('property', ''), 'Enregistrement impossible');
+      if (rows.length) await q(sb.from('crm_fields').insert(rows), 'Enregistrement impossible');
+      crmCache.clear(); fieldsDlg.close(); toast('Champs HubSpot mis à jour');
+      if (selectedId) renderDetail();
+    } catch {}
+  });
 
   // ---------- Recherche & menu ----------
   let searchTimer;
@@ -592,27 +1136,147 @@
   $('#clearSearch').addEventListener('click', () => { search.value = ''; query = ''; $('#clearSearch').hidden = true; renderList(); search.focus(); });
 
   const menu = $('#menu');
-  $('#menuBtn').addEventListener('click', e => { e.stopPropagation(); menu.hidden = !menu.hidden; });
+  const toggleMenu = e => { e.stopPropagation(); menu.hidden = !menu.hidden; };
+  $('#menuBtn').addEventListener('click', toggleMenu);
+  $('#userBtn').addEventListener('click', toggleMenu);
   document.addEventListener('click', e => { if (!menu.hidden && !menu.contains(e.target)) menu.hidden = true; });
-  $('#csvInput').addEventListener('change', e => { const f = e.target.files[0]; if (f) importCsv(f); e.target.value = ''; menu.hidden = true; });
-  menu.addEventListener('click', e => {
+  $('#csvInput').addEventListener('change', e => { const f = e.target.files[0]; if (f) openImport(f); e.target.value = ''; menu.hidden = true; });
+  menu.addEventListener('click', async e => {
     const action = e.target.closest('button')?.dataset.action; if (!action) return;
     menu.hidden = true;
     if (action === 'add') openForm();
     if (action === 'export') exportCsv();
     if (action === 'geocode') geocodeMissing();
-    if (action === 'sample') loadSample();
-    if (action === 'clear' && confirm(`Supprimer définitivement les ${clients.length} clients de cet appareil ?`)) {
-      clients = []; save(); closeDetail(); renderMarkers(); renderList();
+    if (action === 'members') { membersDlg.showModal(); renderMembers(); }
+    if (action === 'crmfields') openFields();
+    if (action === 'logout') { await sb.auth.signOut(); }
+    if (action === 'clear') {
+      const word = prompt(`Cette action supprime les ${clients.length} clients de la base commune, pour TOUS les collaborateurs.\n\nTapez SUPPRIMER pour confirmer.`);
+      if (word !== 'SUPPRIMER') return;
+      try {
+        await q(sb.from('clients').delete().not('id', 'is', null), 'Suppression impossible');
+        clients = []; favorites.clear(); closeDetail(); scheduleFullRender(); toast('Base vidée');
+      } catch {}
     }
   });
+
+  // ---------- Connexion / comptes ----------
+  const auth = $('#auth'), authForm = $('#authForm');
+  let authMode = 'login';
+  function showAuth(view, msg, kind) {
+    auth.hidden = false;
+    $('#authForm').hidden = view !== 'form';
+    $('#authDenied').hidden = view !== 'denied';
+    $('#authSetup').hidden = view !== 'setup';
+    if (view === 'denied') $('#deniedEmail').textContent = user?.email || '';
+    authMessage(msg, kind);
+  }
+  function authMessage(msg, kind = 'error') {
+    const el = $('#authMsg');
+    el.hidden = !msg; el.textContent = msg || '';
+    el.className = 'auth-msg' + (kind === 'ok' ? ' ok' : '');
+  }
+  function setAuthMode(mode) {
+    authMode = mode;
+    for (const b of document.querySelectorAll('#authTabs button')) b.setAttribute('aria-selected', b.dataset.mode === mode);
+    $('#authTabs').hidden = mode === 'recovery';
+    $('#pw2Label').hidden = mode === 'login';
+    $('#pwLabel').hidden = false;
+    authForm.elements.email.closest('label').hidden = mode === 'recovery';
+    authForm.elements.password.autocomplete = mode === 'login' ? 'current-password' : 'new-password';
+    $('#pwLabel').firstChild.textContent = mode === 'recovery' ? 'Nouveau mot de passe' : 'Mot de passe';
+    $('#authSubmit').textContent = { login: 'Se connecter', signup: 'Créer mon compte', recovery: 'Enregistrer le mot de passe' }[mode];
+    $('#forgotBtn').hidden = mode !== 'login';
+    $('#authLead').textContent = mode === 'recovery' ? 'Choisissez votre nouveau mot de passe.'
+      : mode === 'signup' ? 'Utilisez l’adresse e-mail que votre administrateur a autorisée.'
+      : 'Connectez-vous avec votre adresse e-mail professionnelle.';
+    authMessage('');
+  }
+  $('#authTabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setAuthMode(b.dataset.mode); });
+  const FR_ERRORS = [
+    [/invalid login credentials/i, 'E-mail ou mot de passe incorrect.'],
+    [/email not confirmed/i, 'Confirmez d’abord votre adresse en cliquant sur le lien reçu par e-mail.'],
+    [/already registered|already exists/i, 'Un compte existe déjà avec cette adresse : connectez-vous.'],
+    [/password should be at least/i, 'Le mot de passe doit contenir au moins 8 caractères.'],
+    [/rate limit|too many/i, 'Trop de tentatives. Patientez quelques minutes.'],
+    [/same password|different from the old/i, 'Choisissez un mot de passe différent de l’ancien.'],
+  ];
+  const frError = err => FR_ERRORS.find(([re]) => re.test(err?.message || ''))?.[1] || err?.message || 'Erreur inconnue';
+  const redirectTo = () => location.href.split('#')[0].split('?')[0];
+
+  authForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    const f = authForm.elements, email = f.email.value.trim(), password = f.password.value;
+    if (authMode !== 'recovery' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return authMessage('Adresse e-mail invalide.');
+    if (password.length < 8) return authMessage('Le mot de passe doit contenir au moins 8 caractères.');
+    if (authMode !== 'login' && password !== f.password2.value) return authMessage('Les deux mots de passe ne correspondent pas.');
+    const btn = $('#authSubmit'); btn.disabled = true;
+    try {
+      if (authMode === 'login') {
+        const { error } = await sb.auth.signInWithPassword({ email, password });
+        if (error) authMessage(frError(error));
+      } else if (authMode === 'signup') {
+        const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: redirectTo() } });
+        if (error) authMessage(frError(error));
+        else if (!data.session) { setAuthMode('login'); f.email.value = email; authMessage('Compte créé ! Cliquez sur le lien reçu par e-mail pour confirmer votre adresse, puis connectez-vous.', 'ok'); }
+      } else {
+        const { error } = await sb.auth.updateUser({ password });
+        if (error) authMessage(frError(error));
+        else { toast('Mot de passe modifié'); history.replaceState(null, '', redirectTo()); setAuthMode('login'); handleSession((await sb.auth.getSession()).data.session); }
+      }
+    } finally { btn.disabled = false; }
+  });
+  $('#forgotBtn').addEventListener('click', async () => {
+    const email = authForm.elements.email.value.trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return authMessage('Saisissez d’abord votre adresse e-mail ci-dessus.');
+    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: redirectTo() });
+    authMessage(error ? frError(error) : 'Si un compte existe pour cette adresse, un e-mail de réinitialisation vient d’être envoyé.', error ? 'error' : 'ok');
+  });
+  $('#retryBtn').addEventListener('click', async () => handleSession((await sb.auth.getSession()).data.session));
+  $('#deniedLogout').addEventListener('click', () => sb.auth.signOut());
+
+  let sessionUserId = null;
+  async function handleSession(session) {
+    if (authMode === 'recovery') return; // on attend le nouveau mot de passe
+    if (!session) {
+      sessionUserId = null; user = null; isAdmin = false;
+      channel?.unsubscribe(); channel = null; stopWatch();
+      clients = []; favorites = new Set(); closeDetail(); renderMarkers(); renderChips(); renderList();
+      showAuth('form');
+      return;
+    }
+    if (session.user.id === sessionUserId && auth.hidden) return; // simple rafraîchissement du jeton
+    user = session.user;
+    const { data: me_, error } = await sb.from('members').select('role').eq('email', user.email.toLowerCase()).maybeSingle();
+    if (error) { showAuth('form', 'Connexion au serveur impossible : ' + error.message); return; }
+    if (!me_) { showAuth('denied'); return; }
+    sessionUserId = user.id;
+    isAdmin = me_.role === 'admin';
+    $('#userBtn').textContent = initials(user.email);
+    $('#userBtn').style.background = colorFor(user.email);
+    $('#menuAvatar').textContent = initials(user.email);
+    $('#menuAvatar').style.background = colorFor(user.email);
+    $('#menuEmail').textContent = user.email;
+    $('#menuRole').textContent = isAdmin ? 'Administrateur' : 'Collaborateur';
+    document.querySelector('.admin-only').hidden = !isAdmin;
+    auth.hidden = true;
+    await loadData();
+    subscribe();
+    startWatch();
+  }
 
   // ---------- Démarrage ----------
   applyBaseLayer();
   setSnap('half');
-  renderChips(); renderMarkers(); renderList();
+  renderChips(); renderList();
   $('#locateBtn').classList.toggle('active', settings.follow);
-  fitAll();
-  startWatch();
+  if (!sb) showAuth('setup');
+  else {
+    setAuthMode('login');
+    sb.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') { setAuthMode('recovery'); showAuth('form'); return; }
+      setTimeout(() => handleSession(session), 0); // hors du callback (recommandé par Supabase)
+    });
+  }
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
