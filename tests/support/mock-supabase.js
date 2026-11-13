@@ -8,11 +8,17 @@
             { id: 'u-bob', email: 'bob@soc.fr', password: 'motdepasse1', confirmed: true },
             { id: 'u-intrus', email: 'intrus@gmail.com', password: 'motdepasse1', confirmed: true }],
     members: [{ email: 'admin@soc.fr', role: 'admin' }, { email: 'bob@soc.fr', role: 'user' }],
-    clients: [], favorites: [], client_history: [],
+    clients: [], favorites: [], client_history: [], invites: [],
     crm_fields: [{ property: 'name', label: 'Nom dans le CRM', position: 1 }, { property: 'lifecyclestage', label: 'Étape du cycle de vie', position: 2 }, { property: 'notes_last_contacted', label: 'Dernier contact', position: 3 }],
   };
   for (const [k, v] of Object.entries(window.__SEED__ || {})) db[k] = Array.isArray(db[k]) ? [...db[k], ...v] : v;
   let session = null; const listeners = [];
+  // Arrivée par un lien d'invitation : Supabase ouvre une session pour la personne invitée.
+  if (/type=invite/.test(location.hash) && window.__SEED__?.inviteEmail) {
+    const email = window.__SEED__.inviteEmail;
+    db.users.push({ id: 'u-' + email, email, password: null, confirmed: true });
+    session = { user: { id: 'u-' + email, email } };
+  }
   const emit = (ev, s) => listeners.forEach(cb => cb(ev, s));
   const uid = () => session?.user.id;
   const isAdmin = () => db.members.some(m => m.email === session?.user.email && m.role === 'admin');
@@ -86,6 +92,12 @@
     rpc: async (fn, { items }) => { let n = 0; for (const it of items) { const c = db.clients.find(x => x.id === it.id); if (c) { c.lat = it.lat; c.lng = it.lng; n++; } } return { data: n, error: null }; },
     channel: () => ({ on() { return this; }, subscribe() { return this; }, unsubscribe() {} }),
     functions: { invoke: async (name, { body }) => {
+      if (name === 'inviter') { // reproduit supabase/functions/inviter
+        if (!isAdmin()) return { data: { error: 'Réservé aux administrateurs.' } };
+        if (!db.members.some(m => m.email === body.email)) return { data: { error: 'Ajoutez d\'abord cette adresse à la liste des collaborateurs.' } };
+        if (db.users.some(u => u.email === body.email)) return { data: { status: 'existe' } };
+        db.invites.push(body.email); return { data: { status: 'invité' } };
+      }
       await new Promise(r => setTimeout(r, 300));
       if (body.action === 'search') return { data: { results: [
         { id: '1001', name: body.q + ' (HubSpot)', detail: '12 rue de Rivoli, 75004 Paris · dupont.fr' },
@@ -112,7 +124,7 @@
       },
       async signOut() { session = null; emit('SIGNED_OUT', null); return { error: null }; },
       async resetPasswordForEmail() { return { error: null }; },
-      async updateUser() { return { error: null }; },
+      async updateUser({ password }) { const u = db.users.find(x => x.id === uid()); if (u) u.password = password; return { error: null }; },
     },
   };
   window.supabase = { createClient: () => client };

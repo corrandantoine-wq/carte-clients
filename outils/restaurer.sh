@@ -29,6 +29,8 @@ fi
 # 2. Données de l'appli (tables, règles d'accès, fonctions, historique).
 echo "→ Restauration des données de l'appli…"
 pg_restore --clean --if-exists --no-owner --no-privileges -d "$DB" "$DIR/appli.dump" || echo "⚠️ Certains éléments ont signalé une erreur : vérifiez le message ci-dessus."
-# 3. Mises à jour en direct (la publication temps réel n'est pas incluse dans la sauvegarde).
+# 3. Double verrou : la sauvegarde ne contient pas les droits, on retire de nouveau tout accès aux visiteurs non connectés.
+psql "$DB" -q -f "$(dirname "$0")/../supabase/migrations/005_verrou_anon.sql"
+# 4. Mises à jour en direct (la publication temps réel n'est pas incluse dans la sauvegarde).
 psql "$DB" -qc "do \$\$ begin alter publication supabase_realtime add table public.clients; exception when duplicate_object then null; end \$\$;"
 echo "✅ Restauration terminée : $(psql "$DB" -tAc 'select count(*) from public.clients') clients."

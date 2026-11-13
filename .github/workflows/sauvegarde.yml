@@ -1,5 +1,5 @@
 # Sauvegarde quotidienne de la base Supabase, chiffrée, conservée 30 jours.
-# Garde aussi la base active (l'offre gratuite de Supabase la met en pause après 7 jours sans activité).
+# La connexion quotidienne garde aussi la base active (l'offre gratuite de Supabase la met en pause après 7 jours sans activité).
 #
 # À configurer une fois (Settings → Secrets and variables → Actions → New repository secret) :
 #   SUPABASE_DB_URL   : chaîne de connexion « Session pooler » de Supabase, avec le mot de passe de la base
@@ -23,13 +23,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Garder la base active
-        run: |
-          URL=$(sed -n "s/.*supabaseUrl: '\(.*\)',/\1/p" config.js)
-          KEY=$(sed -n "s/.*supabaseAnonKey: '\(.*\)',/\1/p" config.js)
-          curl -fsS "$URL/rest/v1/crm_fields?select=property&limit=1" -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -o /dev/null
-          echo "Base Supabase active."
-
       - name: Vérifier la configuration
         id: cfg
         env:
@@ -37,7 +30,7 @@ jobs:
           PASS: ${{ secrets.BACKUP_PASSPHRASE }}
         run: |
           if [ -z "$DB" ] || [ -z "$PASS" ]; then
-            echo "::warning title=Sauvegarde non configurée::Ajoutez les secrets SUPABASE_DB_URL et BACKUP_PASSPHRASE (voir le README, section Sauvegardes)."
+            echo "::warning title=Sauvegarde non configurée::Ajoutez les secrets SUPABASE_DB_URL et BACKUP_PASSPHRASE (voir le README, section Sauvegardes). Sans eux, la base n'est ni sauvegardée ni maintenue active."
             echo "ok=false" >> "$GITHUB_OUTPUT"
           else
             echo "ok=true" >> "$GITHUB_OUTPUT"
@@ -67,6 +60,7 @@ jobs:
           # Comptes des collaborateurs (utile seulement si le projet Supabase devait être recréé).
           pg_dump "$DB" --data-only --table=auth.users --table=auth.identities --format=custom --file="$NAME/comptes.dump" \
             || { echo "::warning::Comptes non sauvegardés (droits insuffisants) : les données de l'appli le sont."; rm -f "$NAME/comptes.dump"; }
+          # Cette connexion compte aussi comme activité : la base n'est pas mise en pause.
           psql "$DB" -tAc "select 'clients : ' || count(*) from public.clients" | tee "$NAME/resume.txt"
           tar czf - "$NAME" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 3 3<<<"$PASS" \
             --symmetric --cipher-algo AES256 -o "$NAME.tar.gz.gpg"

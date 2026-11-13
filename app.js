@@ -57,6 +57,11 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), action ? Math.max(ms, 6000) : ms);
   }
 
+  // Lien d'invitation ou lien expiré : à lire avant que Supabase ne nettoie l'adresse de la page.
+  const landing = new URLSearchParams(location.hash.slice(1));
+  const inviteLanding = landing.get('type') === 'invite';
+  const landingError = landing.get('error_code') || landing.get('error');
+
   // ---------- Connexion à Supabase ----------
   const cfg = window.CARTE_CLIENTS_CONFIG || {};
   const sb = cfg.supabaseUrl && cfg.supabaseAnonKey && window.supabase
@@ -1170,7 +1175,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
             <option value="user"${m.role === 'user' ? ' selected' : ''}>Collaborateur</option>
             <option value="admin"${m.role === 'admin' ? ' selected' : ''}>Admin</option>
           </select>
-          ${m.email === mine ? '' : `<button class="icon-del" data-del aria-label="Retirer">${I.trash}</button>`}
+          ${m.email === mine ? '' : `<button class="icon-del resend" data-invite aria-label="Renvoyer l’invitation" title="Renvoyer l’invitation">${I.mail}</button><button class="icon-del" data-del aria-label="Retirer">${I.trash}</button>`}
         </li>`).join('');
     } catch { list.innerHTML = '<li class="muted">Impossible de charger la liste.</li>'; }
   }
@@ -1180,9 +1185,20 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('Adresse e-mail invalide.');
     try {
       await q(sb.from('members').upsert({ email, role: f.role.value }), 'Ajout impossible');
-      f.email.value = ''; toast(`${email} peut maintenant créer son compte.`, 3500); renderMembers(); await loadMemberEmails(); renderChips();
+      f.email.value = ''; renderMembers(); await loadMemberEmails(); renderChips();
+      await sendInvite(email);
     } catch {}
   });
+  // Invitation par e-mail, via la fonction serveur « inviter » (vérifie que l'appelant est administrateur).
+  async function sendInvite(email) {
+    try {
+      const { data, error } = await sb.functions.invoke('inviter', { body: { email } });
+      let msg = data?.error;
+      if (error) { msg = error.message; try { msg = (await error.context.json()).error || msg; } catch {} }
+      if (msg) return toast(`Invitation non envoyée : ${msg}`, 6000);
+      toast(data.status === 'existe' ? `${email} a déjà un compte : il peut se connecter (ou utiliser « Mot de passe oublié »).` : `Invitation envoyée à ${email}.`, 5000);
+    } catch (e) { toast(`Invitation non envoyée : ${e.message || e}`, 6000); }
+  }
   $('#membersList').addEventListener('change', async e => {
     const sel = e.target.closest('[data-role]'); if (!sel) return;
     const email = sel.closest('li').dataset.email;
@@ -1190,6 +1206,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     catch { renderMembers(); }
   });
   $('#membersList').addEventListener('click', async e => {
+    if (e.target.closest('[data-invite]')) return sendInvite(e.target.closest('li').dataset.email);
     if (!e.target.closest('[data-del]')) return;
     const email = e.target.closest('li').dataset.email;
     if (!confirm(`Retirer l’accès de ${email} ?`)) return;
@@ -1295,27 +1312,30 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     el.hidden = !msg; el.textContent = msg || '';
     el.className = 'auth-msg' + (kind === 'ok' ? ' ok' : '');
   }
+  // Pas d'inscription libre : les comptes sont créés uniquement par invitation d'un administrateur.
+  //   login    : connexion
+  //   recovery : choix d'un nouveau mot de passe (lien « mot de passe oublié »)
+  //   invite   : choix du mot de passe à l'arrivée par un lien d'invitation
   function setAuthMode(mode) {
     authMode = mode;
-    for (const b of document.querySelectorAll('#authTabs button')) b.setAttribute('aria-selected', b.dataset.mode === mode);
-    $('#authTabs').hidden = mode === 'recovery';
-    $('#pw2Label').hidden = mode === 'login';
+    const newPw = mode !== 'login';
+    $('#pw2Label').hidden = !newPw;
     $('#pwLabel').hidden = false;
-    authForm.elements.email.closest('label').hidden = mode === 'recovery';
-    authForm.elements.password.autocomplete = mode === 'login' ? 'current-password' : 'new-password';
-    $('#pwLabel').firstChild.textContent = mode === 'recovery' ? 'Nouveau mot de passe' : 'Mot de passe';
-    $('#authSubmit').textContent = { login: 'Se connecter', signup: 'Créer mon compte', recovery: 'Enregistrer le mot de passe' }[mode];
-    $('#forgotBtn').hidden = mode !== 'login';
-    $('#authLead').textContent = mode === 'recovery' ? 'Choisissez votre nouveau mot de passe.'
-      : mode === 'signup' ? 'Utilisez l’adresse e-mail que votre administrateur a autorisée.'
+    authForm.elements.email.closest('label').hidden = newPw;
+    authForm.elements.password.autocomplete = newPw ? 'new-password' : 'current-password';
+    $('#pwLabel').firstChild.textContent = newPw ? 'Nouveau mot de passe' : 'Mot de passe';
+    $('#authSubmit').textContent = newPw ? 'Enregistrer le mot de passe' : 'Se connecter';
+    $('#forgotBtn').hidden = newPw;
+    $('#inviteOnly').hidden = newPw;
+    $('#authLead').textContent = mode === 'invite' ? 'Bienvenue ! Choisissez le mot de passe de votre compte.'
+      : mode === 'recovery' ? 'Choisissez votre nouveau mot de passe.'
       : 'Connectez-vous avec votre adresse e-mail professionnelle.';
     authMessage('');
   }
-  $('#authTabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setAuthMode(b.dataset.mode); });
   const FR_ERRORS = [
     [/invalid login credentials/i, 'E-mail ou mot de passe incorrect.'],
     [/email not confirmed/i, 'Confirmez d’abord votre adresse en cliquant sur le lien reçu par e-mail.'],
-    [/already registered|already exists/i, 'Un compte existe déjà avec cette adresse : connectez-vous.'],
+    [/signups? not allowed|signup.*disabled/i, 'Les comptes sont créés uniquement sur invitation d’un administrateur.'],
     [/password should be at least/i, 'Le mot de passe doit contenir au moins 8 caractères.'],
     [/rate limit|too many/i, 'Trop de tentatives. Patientez quelques minutes.'],
     [/same password|different from the old/i, 'Choisissez un mot de passe différent de l’ancien.'],
@@ -1326,7 +1346,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   authForm.addEventListener('submit', async e => {
     e.preventDefault();
     const f = authForm.elements, email = f.email.value.trim(), password = f.password.value;
-    if (authMode !== 'recovery' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return authMessage('Adresse e-mail invalide.');
+    if (authMode === 'login' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return authMessage('Adresse e-mail invalide.');
     if (password.length < 8) return authMessage('Le mot de passe doit contenir au moins 8 caractères.');
     if (authMode !== 'login' && password !== f.password2.value) return authMessage('Les deux mots de passe ne correspondent pas.');
     const btn = $('#authSubmit'); btn.disabled = true;
@@ -1334,11 +1354,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
       if (authMode === 'login') {
         const { error } = await sb.auth.signInWithPassword({ email, password });
         if (error) authMessage(frError(error));
-      } else if (authMode === 'signup') {
-        const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: redirectTo() } });
-        if (error) authMessage(frError(error));
-        else if (!data.session) { setAuthMode('login'); f.email.value = email; authMessage('Compte créé ! Cliquez sur le lien reçu par e-mail pour confirmer votre adresse, puis connectez-vous.', 'ok'); }
-      } else {
+      } else { // nouveau mot de passe (récupération ou invitation)
         const { error } = await sb.auth.updateUser({ password });
         if (error) authMessage(frError(error));
         else { toast('Mot de passe modifié'); history.replaceState(null, '', redirectTo()); setAuthMode('login'); handleSession((await sb.auth.getSession()).data.session); }
@@ -1355,13 +1371,14 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   $('#deniedLogout').addEventListener('click', () => sb.auth.signOut());
 
   let sessionUserId = null;
+  let landingMsg = null;
   async function handleSession(session) {
-    if (authMode === 'recovery') return; // on attend le nouveau mot de passe
+    if (authMode !== 'login') return; // on attend le choix du mot de passe
     if (!session) {
       sessionUserId = null; user = null; isAdmin = false;
       channel?.unsubscribe(); channel = null; stopWatch();
       clients = []; favorites = new Set(); closeDetail(); renderMarkers(); renderChips(); renderList();
-      showAuth('form');
+      showAuth('form', landingMsg); landingMsg = null; // message d'un lien expiré : affiché une fois
       return;
     }
     if (session.user.id === sessionUserId && auth.hidden) return; // simple rafraîchissement du jeton
@@ -1394,8 +1411,16 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   if (!sb) showAuth('setup');
   else {
     setAuthMode('login');
+    if (landingError) {
+      history.replaceState(null, '', redirectTo());
+      landingMsg = /expired/i.test(landingError) || /expired/i.test(landing.get('error_description') || '')
+        ? 'Ce lien a expiré. Demandez à votre administrateur de vous renvoyer une invitation, ou utilisez « Mot de passe oublié ».'
+        : 'Ce lien n’est pas valide. Demandez à votre administrateur de vous renvoyer une invitation.';
+      showAuth('form', landingMsg);
+    }
     sb.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY') { setAuthMode('recovery'); showAuth('form'); return; }
+      if (inviteLanding && session && authMode === 'login' && !sessionUserId) { setAuthMode('invite'); showAuth('form'); return; }
       setTimeout(() => handleSession(session), 0); // hors du callback (recommandé par Supabase)
     });
   }

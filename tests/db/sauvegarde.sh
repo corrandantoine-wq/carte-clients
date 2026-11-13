@@ -31,6 +31,7 @@ done
 check "comptes restaurés" "$(psql "$R" -tAc 'select count(*) from auth.users')" "$(psql "$DB" -tAc 'select count(*) from auth.users')"
 check "accents intacts" "$(psql "$R" -tAc "select notes from public.clients where nom = 'Témoin é à ç'")" "note « spéciale »"
 check "règles d'accès restaurées" "$(psql "$R" -tAc "select count(*) > 0 from pg_policies where tablename = 'clients'")" "t"
+check "visiteurs non connectés sans accès après restauration" "$(psql "$R" -tAc "select has_table_privilege('anon', 'public.clients', 'select')")" "f"
 check "temps réel réactivé" "$(psql "$R" -tAc "select count(*) from pg_publication_tables where pubname = 'supabase_realtime'")" "1"
 printf 'mauvaise\n' | bash "$ROOT/outils/restaurer.sh" sauvegarde-*.tar.gz.gpg "$R" > /dev/null 2>&1 && { echo "❌ archive déchiffrée avec une mauvaise phrase"; exit 1; }
 echo "ok : mauvaise phrase secrète refusée"
