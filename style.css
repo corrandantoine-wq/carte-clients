@@ -460,3 +460,5 @@ dialog[open] { animation: up .25s cubic-bezier(.2,.8,.2,1); }
 .owner-row .grow { flex: 1; min-width: 0; }
 .owner-select { height: 40px; max-width: 62%; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); font: inherit; font-size: 14px; padding: 0 8px; }
 .btn.small { height: 36px; padding: 0 14px; font-size: 14px; flex: none; }
+.pick-list .icon-del.resend { color: var(--accent); }
+#inviteOnly { margin: -8px 0 16px; text-align: center; }

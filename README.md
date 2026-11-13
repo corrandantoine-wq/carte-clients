@@ -3,7 +3,7 @@
 Web app (installable sur mobile) qui affiche la **base clients commune de l'équipe** sur une carte et montre **en temps réel** les clients les plus proches de chaque collaborateur.
 
 ## Fonctionnalités
-- **Comptes collaborateurs** (e-mail + mot de passe). Seules les adresses autorisées par un administrateur ont accès.
+- **Accès privé, sur invitation** : pas d'inscription libre. Un administrateur invite chaque collaborateur par e-mail ; la personne choisit son mot de passe en suivant le lien.
 - **Base clients commune** : tout le monde voit les mêmes clients. Les ajouts des collègues apparaissent en direct.
 - **Favoris personnels** : chacun marque ses clients d'une étoile et peut n'afficher que ses favoris.
 - **HubSpot** : chaque client peut être relié à sa fiche HubSpot. La fiche affiche alors des champs du CRM, choisis par l'administrateur, avec un lien « Ouvrir dans HubSpot ».
@@ -27,8 +27,18 @@ Web app (installable sur mobile) qui affiche la **base clients commune de l'équ
 | `config.js` | Adresse du projet Supabase et clé publique « anon » |
 | `supabase/migrations/` | Tables, règles de sécurité, temps réel, import ERP |
 | `supabase/functions/hubspot/` | Passerelle sécurisée vers HubSpot (le jeton HubSpot reste sur le serveur) |
+| `supabase/functions/inviter/` | Envoi des invitations (réservé aux admins ; la clé secrète reste sur le serveur) |
 
-La sécurité repose sur les règles **Row Level Security** de la base :
+## Sécurité
+- **Pas d'inscription libre** : les inscriptions sont désactivées dans Supabase (*Authentication → Sign In / Providers → Allow new users to sign up* : désactivé). Les comptes sont créés uniquement par invitation, via la fonction `inviter`. Elle vérifie que l'appelant est administrateur et que l'adresse figure dans `members`.
+- **Rien sans connexion** : l'appli n'interroge la base qu'après la connexion. De plus, le rôle `anon` (requêtes non connectées) n'a **aucun droit** sur les tables ni les fonctions, y compris les tables créées plus tard (`005_verrou_anon.sql`). Supabase répond « permission refusée ».
+- **Clés** : seule la clé publique `anon` figure dans le code (`config.js`). Les secrets sont hors du dépôt :
+  - la clé `service_role` est une variable d'environnement des fonctions Supabase ;
+  - le jeton HubSpot est un secret Supabase ;
+  - la connexion à la base et la phrase de chiffrement des sauvegardes sont des secrets GitHub ;
+  - le mot de passe Gmail est dans les réglages SMTP de Supabase.
+
+Règles d'accès (**Row Level Security**, activée sur toutes les tables) :
 - Un compte dont l'adresse n'est pas dans `members` ne voit **rien**.
 - Les favoris sont visibles par leur seul propriétaire.
 - Seuls l'auteur d'un client ou un admin peuvent le supprimer.
@@ -43,7 +53,7 @@ La sécurité repose sur les règles **Row Level Security** de la base :
 
 ### 2. Créer les tables
 1. Dans Supabase, ouvrez **SQL Editor → New query**.
-2. Collez le contenu de `supabase/migrations/001_init.sql` et cliquez sur **Run**. Recommencez avec `002_import_erp.sql`, puis `003_historique_corbeille.sql` et `004_secteurs.sql`.
+2. Collez le contenu de `supabase/migrations/001_init.sql` et cliquez sur **Run**. Recommencez avec `002_import_erp.sql`, puis `003_historique_corbeille.sql`, `004_secteurs.sql` et `005_verrou_anon.sql`.
 3. Déclarez-vous administrateur. Dans une nouvelle requête, avec **votre** adresse :
    ```sql
    insert into public.members (email, role) values ('prenom.nom@societe.fr', 'admin');
@@ -74,13 +84,15 @@ La clé « anon » est faite pour être publique. Ne mettez **jamais** la clé *
 2. Dans Supabase, ouvrez **Edge Functions → Deploy a new function → Via Editor**.
    - Nom : `hubspot`.
    - Collez le contenu de `supabase/functions/hubspot/index.ts`, puis **Deploy**.
+   - Faites de même pour la fonction `inviter` (`supabase/functions/inviter/index.ts`), indispensable pour inviter les collaborateurs.
 3. Dans **Edge Functions → Secrets**, ajoutez `HUBSPOT_TOKEN` avec le jeton copié.
    - Les clients sont liés aux **entreprises** HubSpot par défaut. Pour les lier aux **contacts**, ajoutez aussi le secret `HUBSPOT_OBJECT` = `contacts`, et les scopes `crm.objects.contacts.read` et `crm.schemas.contacts.read`.
 
 ### 6. Mettre en ligne et inviter l'équipe
 1. Publiez (fusion dans `main` → GitHub Pages).
-2. Connectez-vous : onglet **Créer un compte** avec votre adresse admin, confirmez l'e-mail, puis connectez-vous.
-3. Menu ☰ → **Collaborateurs** : ajoutez l'adresse de chaque collègue. Chacun crée ensuite son compte avec cette adresse.
+2. **Désactivez les inscriptions** : Supabase → *Authentication → Sign In / Providers* → décochez **Allow new users to sign up**.
+3. **Premier administrateur** : Supabase → *Authentication → Users → Invite user* avec votre adresse (déjà déclarée admin à l'étape 2 de l'installation). Suivez le lien reçu pour choisir votre mot de passe.
+4. Menu ☰ → **Collaborateurs** : saisissez l'adresse d'un collègue et cliquez sur **Inviter**. Il reçoit un e-mail pour choisir son mot de passe. Le bouton ✉ renvoie l'invitation si besoin.
 4. Menu ☰ → **Champs HubSpot affichés** : cochez les informations du CRM à montrer sur les fiches.
 
 ## Sauvegardes
@@ -123,11 +135,11 @@ Ils sont lancés automatiquement sur GitHub à chaque modification (onglet **Act
   ```bash
   npm run test:unit
   ```
-- **Interface** : 28 scénarios, rejoués sur mobile et sur ordinateur. Ils couvrent la connexion, l'accès refusé, l'import ERP (CSV et Excel), le ré-import sans doublon, les favoris, le rayon, la recherche, le trajet A → B, la corbeille, l'historique, les secteurs, HubSpot et l'administration. La base de données et les services externes sont simulés.
+- **Interface** : 31 scénarios, rejoués sur mobile et sur ordinateur. Ils couvrent la connexion, l'accès refusé, l'import ERP (CSV et Excel), le ré-import sans doublon, les favoris, le rayon, la recherche, le trajet A → B, la corbeille, l'historique, les secteurs, HubSpot et l'administration. La base de données et les services externes sont simulés.
   ```bash
   npm ci && npx playwright install chromium && npx playwright test
   ```
-- **Base de données** : 42 vérifications des règles d'accès sur un vrai PostgreSQL (collaborateur, administrateur, personne non autorisée, accès sans connexion).
+- **Base de données** : 47 vérifications des règles d'accès sur un vrai PostgreSQL (collaborateur, administrateur, personne non autorisée, accès sans connexion).
   ```bash
   PGHOST=localhost PGUSER=postgres bash tests/db/run.sh
   ```

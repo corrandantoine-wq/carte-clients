@@ -131,8 +131,18 @@ select pg_temp.check('l''intrus ne peut pas déplacer les clients',
 reset role;
 set role anon;
 select pg_temp.refused('anonyme : lecture des clients', $$select count(*) from public.clients$$);
+select pg_temp.refused('anonyme : lecture des collaborateurs', $$select count(*) from public.members$$);
+select pg_temp.refused('anonyme : lecture de l''historique', $$select count(*) from public.client_history$$);
+select pg_temp.refused('anonyme : ajout d''un client', $$insert into public.clients (nom) values ('x')$$);
+select pg_temp.refused('anonyme : appel de is_member', $$select public.is_member()$$);
 select pg_temp.refused('anonyme : set_coords', $$select public.set_coords('[]'::jsonb)$$);
 reset role;
 select pg_temp.check('les positions n''ont pas été modifiées par l''intrus', (select bool_and(lat = 48.85) from public.clients));
+reset role;
+create table public.table_future (id int); -- une table créée plus tard n'est pas ouverte aux visiteurs
+set role anon;
+select pg_temp.refused('anonyme : table créée après coup', $$select * from public.table_future$$);
+reset role;
+drop table public.table_future;
 \o
 \echo '✅ Tous les tests de sécurité de la base sont passés.'

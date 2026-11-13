@@ -163,12 +163,9 @@
       <img src="icon.svg" alt="" class="auth-logo">
       <h1>Carte Clients</h1>
       <p id="authLead" class="auth-lead">Connectez-vous avec votre adresse e-mail professionnelle.</p>
+      <p id="inviteOnly" class="hint">Accès sur invitation uniquement : demandez à votre administrateur.</p>
 
       <form id="authForm" class="auth-form" novalidate>
-        <div class="tabs" id="authTabs">
-          <button type="button" data-mode="login" aria-selected="true">Connexion</button>
-          <button type="button" data-mode="signup" aria-selected="false">Créer un compte</button>
-        </div>
         <label>E-mail<input name="email" type="email" autocomplete="username" required></label>
         <label id="pwLabel">Mot de passe<input name="password" type="password" autocomplete="current-password" minlength="8" required></label>
         <label id="pw2Label" hidden>Confirmer le mot de passe<input name="password2" type="password" autocomplete="new-password" minlength="8"></label>
@@ -205,11 +202,11 @@
     <div class="dlg-body">
       <div class="dlg-grab"></div>
       <h2>Collaborateurs</h2>
-      <p class="hint">Seules ces adresses peuvent se connecter à la base. Après l'ajout, la personne crée son compte avec la même adresse.</p>
+      <p class="hint">Seules ces adresses peuvent se connecter. À l'ajout, la personne reçoit une invitation par e-mail pour choisir son mot de passe.</p>
       <form id="memberForm" class="row">
         <input name="email" class="dlg-input" type="email" placeholder="prenom.nom@societe.fr" required>
         <select name="role" class="dlg-input w-auto"><option value="user">Collaborateur</option><option value="admin">Admin</option></select>
-        <button class="btn primary">Ajouter</button>
+        <button class="btn primary">Inviter</button>
       </form>
       <ul id="membersList" class="pick-list"></ul>
       <div class="dialog-actions"><button class="btn ghost" data-close>Fermer</button></div>

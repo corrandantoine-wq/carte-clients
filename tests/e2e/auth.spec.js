@@ -1,5 +1,5 @@
 // Connexion, inscription et contrôle d'accès.
-const { test, expect, login } = require('../support/fixtures');
+const { test, expect, seed, login } = require('../support/fixtures');
 
 test('affiche l’écran de connexion et rien d’autre', async ({ page }) => {
   await page.goto('/index.html');
@@ -13,17 +13,33 @@ test('mauvais mot de passe : message clair en français', async ({ page }) => {
   await expect(page.locator('#authMsg')).toHaveText('E-mail ou mot de passe incorrect.');
 });
 
-test('inscription : demande de confirmer l’adresse', async ({ page }) => {
+test('pas d’inscription libre : aucun moyen de créer un compte', async ({ page }) => {
   await page.goto('/index.html');
-  await page.click('#authTabs [data-mode=signup]');
-  await page.fill('#authForm [name=email]', 'claire@soc.fr');
-  await page.fill('#authForm [name=password]', 'secret123');
-  await page.fill('#authForm [name=password2]', 'autre123');
+  await expect(page.locator('#authForm')).toBeVisible();
+  await expect(page.getByText('Créer un compte')).toHaveCount(0);
+  await expect(page.locator('[data-mode=signup], #authTabs')).toHaveCount(0);
+  await expect(page.locator('#inviteOnly')).toContainText('sur invitation uniquement');
+  expect(await page.evaluate(() => document.documentElement.outerHTML.includes('signUp'))).toBe(false);
+});
+
+test('arrivée par une invitation : choix du mot de passe puis accès à l’appli', async ({ page }) => {
+  await seed(page, { inviteEmail: 'claire@soc.fr', members: [{ email: 'claire@soc.fr', role: 'user' }] });
+  await page.goto('/index.html#access_token=x&type=invite');
+  await expect(page.locator('#authLead')).toHaveText('Bienvenue ! Choisissez le mot de passe de votre compte.');
+  await expect(page.locator('#authForm [name=email]')).toBeHidden();
+  await page.fill('#authForm [name=password]', 'nouveau123');
+  await page.fill('#authForm [name=password2]', 'different');
   await page.click('#authSubmit');
   await expect(page.locator('#authMsg')).toHaveText('Les deux mots de passe ne correspondent pas.');
-  await page.fill('#authForm [name=password2]', 'secret123');
+  await page.fill('#authForm [name=password2]', 'nouveau123');
   await page.click('#authSubmit');
-  await expect(page.locator('#authMsg')).toContainText('Cliquez sur le lien reçu par e-mail');
+  await expect(page.locator('#auth')).toBeHidden();
+  expect(await page.evaluate(() => window.__db.users.find(u => u.email === 'claire@soc.fr').password)).toBe('nouveau123');
+});
+
+test('lien d’invitation expiré : message clair', async ({ page }) => {
+  await page.goto('/index.html#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired');
+  await expect(page.locator('#authMsg')).toContainText('Ce lien a expiré');
 });
 
 test('un compte non autorisé est bloqué', async ({ page }) => {

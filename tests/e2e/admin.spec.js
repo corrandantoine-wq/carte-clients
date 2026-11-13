@@ -1,14 +1,24 @@
 // Administration (collaborateurs, champs HubSpot) et liaison d'un client à HubSpot (simulée).
 const { test, expect, seed, login } = require('../support/fixtures');
 
-test('ajouter un collaborateur', async ({ page }) => {
+test('inviter un collaborateur : ajout à la liste et e-mail d’invitation', async ({ page }) => {
   await login(page);
   await page.click('#userBtn');
   await page.click('[data-action=members]');
   await page.fill('#memberForm [name=email]', 'Claire@Soc.fr');
   await page.click('#memberForm .btn');
   await expect(page.locator('#membersList')).toContainText('claire@soc.fr');
+  await expect(page.locator('#toastMsg')).toHaveText('Invitation envoyée à claire@soc.fr.');
   expect(await page.evaluate(() => window.__db.members.map(m => m.email))).toContain('claire@soc.fr');
+  expect(await page.evaluate(() => window.__db.invites)).toEqual(['claire@soc.fr']);
+});
+
+test('renvoyer l’invitation à quelqu’un qui a déjà un compte', async ({ page }) => {
+  await login(page);
+  await page.click('#userBtn');
+  await page.click('[data-action=members]');
+  await page.click('#membersList li[data-email="bob@soc.fr"] [data-invite]');
+  await expect(page.locator('#toastMsg')).toContainText('bob@soc.fr a déjà un compte');
 });
 
 test('choisir les champs HubSpot affichés', async ({ page }) => {
