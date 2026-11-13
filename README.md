@@ -15,7 +15,7 @@ Web app (installable sur mobile) qui affiche la **base clients commune de l'équ
 ## Architecture
 | Élément | Rôle |
 |---|---|
-| `index.html`, `app.js`, `style.css` | L'appli (statique, hébergée sur GitHub Pages) |
+| `index.html`, `app.js`, `style.css` | L'appli (statique, hébergée sur GitHub Pages). Fonds de carte : plan et photos aériennes de l'IGN (Géoplateforme), gratuits et sans clé |
 | `config.js` | Adresse du projet Supabase et clé publique « anon » |
 | `supabase/migrations/` | Tables, règles de sécurité, temps réel, import ERP |
 | `supabase/functions/hubspot/` | Passerelle sécurisée vers HubSpot (le jeton HubSpot reste sur le serveur) |

@@ -1,8 +1,8 @@
 // Service worker : met en cache l'interface pour un démarrage rapide.
 // Les données (Supabase, HubSpot, géocodage) ne sont jamais mises en cache ici.
-const CACHE = 'carte-clients-v6';
+const CACHE = 'carte-clients-v7';
 const SHELL = ['./', './index.html', './style.css', './app.js', './config.js', './manifest.webmanifest', './icon.svg'];
-const STATIC_HOSTS = /tile\.openstreetmap\.org|arcgisonline|unpkg\.com|cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|fonts\.(googleapis|gstatic)\.com/;
+const STATIC_HOSTS = /unpkg\.com|cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|fonts\.(googleapis|gstatic)\.com/;
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -14,7 +14,9 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
   const same = url.origin === location.origin;
-  if (!same && !STATIC_HOSTS.test(url.hostname)) return; // réseau direct (Supabase, API…)
+  // Tuiles de carte IGN (/wmts) mises en cache ; géocodage et itinéraires toujours en direct.
+  const tile = url.hostname === 'data.geopf.fr' && url.pathname.startsWith('/wmts');
+  if (!same && !tile && !STATIC_HOSTS.test(url.hostname)) return; // réseau direct (Supabase, API…)
   if (same) {
     // Interface : réseau d'abord (pour recevoir les mises à jour), cache si hors ligne.
     e.respondWith(fetch(e.request).then(res => {

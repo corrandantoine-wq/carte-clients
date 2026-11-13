@@ -118,14 +118,17 @@
   // ---------- Carte & fonds ----------
   const map = L.map('map', { zoomControl: false, maxZoom: 19, minZoom: 3 }).setView([46.6, 2.4], 6);
   map.attributionControl.setPrefix(false);
-  // Fond OpenStreetMap (sans clé API). Le mode sombre est obtenu par un filtre CSS.
-  const plan = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19, className: 'tiles-plan',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  });
+  // Fonds de carte de l'IGN (Géoplateforme) : gratuits, sans clé, licence ouverte Etalab.
+  // Le mode sombre du plan est obtenu par un filtre CSS.
+  const ign = (layer, format, opts = {}) => L.tileLayer(
+    `https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${layer}&STYLE=normal&TILEMATRIXSET=PM` +
+    `&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=${format}`,
+    { maxZoom: 19, maxNativeZoom: 19, ...opts });
+  const IGN_ATTR = '&copy; <a href="https://www.ign.fr/" target="_blank" rel="noopener">IGN</a> – Géoplateforme';
+  const plan = ign('GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2', 'image/png', { className: 'tiles-plan', attribution: IGN_ATTR });
   const sat = L.layerGroup([
-    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Imagerie &copy; Esri' }),
-    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }),
+    ign('ORTHOIMAGERY.ORTHOPHOTOS', 'image/jpeg', { attribution: `Photographies aériennes ${IGN_ATTR}` }),
+    ign('GEOGRAPHICALNAMES.NAMES', 'image/png', { minZoom: 6, maxZoom: 15 }), // noms des villes et quartiers (masqués de près, trop chargés)
   ]);
   let baseLayer = null;
   function applyBaseLayer() {
