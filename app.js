@@ -1303,6 +1303,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     auth.hidden = false;
     $('#authForm').hidden = view !== 'form';
     $('#authDenied').hidden = view !== 'denied';
+    $('#authMfa').hidden = view !== 'mfa';
     $('#authSetup').hidden = view !== 'setup';
     if (view === 'denied') $('#deniedEmail').textContent = user?.email || '';
     authMessage(msg, kind);
@@ -1370,12 +1371,55 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   $('#retryBtn').addEventListener('click', async () => handleSession((await sb.auth.getSession()).data.session));
   $('#deniedLogout').addEventListener('click', () => sb.auth.signOut());
 
+  // ---------- Double vérification (administrateurs) ----------
+  // La base refuse tout à un administrateur dont la session n'a pas validé le code (niveau aal2).
+  const mfa = { active: false, factorId: null };
+  const mfaMsg = (msg, ok = false) => { const el = $('#mfaMsg'); el.hidden = !msg; el.textContent = msg || ''; el.className = 'auth-msg' + (ok ? ' ok' : ''); };
+  async function mfaOk() {
+    const { data: aal } = await sb.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (aal?.currentLevel === 'aal2') return true;
+    const { data: factors } = await sb.auth.mfa.listFactors();
+    const verified = (factors?.totp || []).find(f => f.status === 'verified');
+    mfa.factorId = verified?.id || null;
+    if (!verified) { // première fois : enregistrement de l'appli d'authentification
+      for (const f of (factors?.all || []).filter(f => f.status !== 'verified')) await sb.auth.mfa.unenroll({ factorId: f.id }); // essais abandonnés
+      const { data, error } = await sb.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'Carte Clients', issuer: 'Carte Clients' });
+      if (error) { showAuth('form', 'Double vérification indisponible : ' + error.message); return false; }
+      mfa.factorId = data.id;
+      const img = new Image(); img.alt = 'Code QR à scanner'; img.src = data.totp.qr_code;
+      $('#mfaQr').replaceChildren(img);
+      $('#mfaSecret').textContent = data.totp.secret;
+    }
+    $('#mfaEnroll').hidden = !!verified;
+    $('#mfaAsk').hidden = !verified;
+    $('#mfaCode').value = ''; mfaMsg('');
+    mfa.active = true;
+    showAuth('mfa');
+    setTimeout(() => $('#mfaCode').focus(), 50);
+    return false;
+  }
+  $('#mfaCode').addEventListener('input', e => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6); });
+  $('#mfaForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const code = $('#mfaCode').value;
+    if (!/^\d{6}$/.test(code)) return mfaMsg('Saisissez les 6 chiffres affichés par votre appli.');
+    const btn = $('#mfaSubmit'); btn.disabled = true;
+    try {
+      const { error } = await sb.auth.mfa.challengeAndVerify({ factorId: mfa.factorId, code });
+      if (error) { $('#mfaCode').value = ''; return mfaMsg('Code incorrect. Le code change toutes les 30 secondes : saisissez celui affiché maintenant.'); }
+      mfa.active = false;
+      await handleSession((await sb.auth.getSession()).data.session);
+    } finally { btn.disabled = false; }
+  });
+  $('#mfaLogout').addEventListener('click', () => sb.auth.signOut());
+
   let sessionUserId = null;
   let landingMsg = null;
+  let sessionQueue = Promise.resolve(); // les changements de session sont traités un par un
   async function handleSession(session) {
     if (authMode !== 'login') return; // on attend le choix du mot de passe
     if (!session) {
-      sessionUserId = null; user = null; isAdmin = false;
+      sessionUserId = null; user = null; isAdmin = false; mfa.active = false;
       channel?.unsubscribe(); channel = null; stopWatch();
       clients = []; favorites = new Set(); closeDetail(); renderMarkers(); renderChips(); renderList();
       showAuth('form', landingMsg); landingMsg = null; // message d'un lien expiré : affiché une fois
@@ -1386,6 +1430,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     const { data: me_, error } = await sb.from('members').select('role').eq('email', user.email.toLowerCase()).maybeSingle();
     if (error) { showAuth('form', 'Connexion au serveur impossible : ' + error.message); return; }
     if (!me_) { showAuth('denied'); return; }
+    if (me_.role === 'admin' && !(await mfaOk())) return; // administrateur : code à 6 chiffres obligatoire
     sessionUserId = user.id;
     isAdmin = me_.role === 'admin';
     if (!isAdmin && !['', 'me'].includes(settings.owner)) { settings.owner = ''; saveSettings(); } // filtre d'admin resté sur l'appareil
@@ -1421,7 +1466,9 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     sb.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY') { setAuthMode('recovery'); showAuth('form'); return; }
       if (inviteLanding && session && authMode === 'login' && !sessionUserId) { setAuthMode('invite'); showAuth('form'); return; }
-      setTimeout(() => handleSession(session), 0); // hors du callback (recommandé par Supabase)
+      if (mfa.active && event !== 'SIGNED_OUT') return; // l'écran du code gère la suite
+      if (event === 'MFA_CHALLENGE_VERIFIED') return;     // déjà traité après la saisie du code
+      setTimeout(() => { sessionQueue = sessionQueue.then(() => handleSession(session)).catch(console.error); }, 0); // hors du callback (recommandé par Supabase)
     });
   }
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});

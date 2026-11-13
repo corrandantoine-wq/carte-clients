@@ -4,7 +4,7 @@
 // window.__SEED__ (défini avant le chargement) permet de pré-remplir la base.
 (() => {
   const db = window.__db = {
-    users: [{ id: 'u-admin', email: 'admin@soc.fr', password: 'motdepasse1', confirmed: true },
+    users: [{ id: 'u-admin', email: 'admin@soc.fr', password: 'motdepasse1', confirmed: true, factors: [{ id: 'f-admin', factor_type: 'totp', status: 'verified' }] },
             { id: 'u-bob', email: 'bob@soc.fr', password: 'motdepasse1', confirmed: true },
             { id: 'u-intrus', email: 'intrus@gmail.com', password: 'motdepasse1', confirmed: true }],
     members: [{ email: 'admin@soc.fr', role: 'admin' }, { email: 'bob@soc.fr', role: 'user' }],
@@ -21,7 +21,8 @@
   }
   const emit = (ev, s) => listeners.forEach(cb => cb(ev, s));
   const uid = () => session?.user.id;
-  const isAdmin = () => db.members.some(m => m.email === session?.user.email && m.role === 'admin');
+  const isAdmin = () => session?.aal === 'aal2' && db.members.some(m => m.email === session?.user.email && m.role === 'admin');
+  const me = () => db.users.find(u => u.id === uid());
   // Reproduit le déclencheur d'historique de la base (003_historique_corbeille.sql).
   const FIELDS = ['nom', 'code_client', 'adresse', 'code_postal', 'ville', 'telephone', 'email', 'notes', 'hubspot_id', 'assigned_to'];
   // Reproduit la règle d'attribution (004_secteurs.sql).
@@ -116,7 +117,7 @@
         const u = db.users.find(x => x.email === email && x.password === password);
         if (!u) return { data: {}, error: { message: 'Invalid login credentials' } };
         if (!u.confirmed) return { data: {}, error: { message: 'Email not confirmed' } };
-        session = { user: { id: u.id, email: u.email } }; emit('SIGNED_IN', session); return { data: { session }, error: null };
+        session = { user: { id: u.id, email: u.email }, aal: 'aal1' }; emit('SIGNED_IN', session); return { data: { session }, error: null };
       },
       async signUp({ email, password }) {
         if (db.users.some(x => x.email === email)) return { data: {}, error: { message: 'User already registered' } };
@@ -124,6 +125,26 @@
       },
       async signOut() { session = null; emit('SIGNED_OUT', null); return { error: null }; },
       async resetPasswordForEmail() { return { error: null }; },
+      // Double vérification (TOTP) ; le code valide du faux Supabase est 123456.
+      mfa: {
+        async getAuthenticatorAssuranceLevel() {
+          const verified = (me()?.factors || []).some(f => f.status === 'verified');
+          return { data: { currentLevel: session?.aal || 'aal1', nextLevel: verified ? 'aal2' : 'aal1' }, error: null };
+        },
+        async listFactors() { const all = me()?.factors || []; return { data: { all, totp: all.filter(f => f.status === 'verified') }, error: null }; },
+        async enroll() {
+          const u = me(); u.factors = u.factors || []; const f = { id: 'f-' + Date.now(), factor_type: 'totp', status: 'unverified' }; u.factors.push(f);
+          window.__db.enrollments = (window.__db.enrollments || 0) + 1;
+          return { data: { id: f.id, type: 'totp', totp: { qr_code: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>', secret: 'JBSWY3DPEHPK3PXP' } }, error: null };
+        },
+        async unenroll({ factorId }) { const u = me(); u.factors = (u.factors || []).filter(f => f.id !== factorId); return { data: {}, error: null }; },
+        async challengeAndVerify({ factorId, code }) {
+          const f = (me()?.factors || []).find(x => x.id === factorId);
+          if (!f || code !== '123456') return { data: null, error: { message: 'Invalid TOTP code entered' } };
+          f.status = 'verified'; session = { ...session, aal: 'aal2' }; emit('MFA_CHALLENGE_VERIFIED', session);
+          return { data: {}, error: null };
+        },
+      },
       async updateUser({ password }) { const u = db.users.find(x => x.id === uid()); if (u) u.password = password; return { error: null }; },
     },
   };

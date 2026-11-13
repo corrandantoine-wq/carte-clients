@@ -462,3 +462,11 @@ dialog[open] { animation: up .25s cubic-bezier(.2,.8,.2,1); }
 .btn.small { height: 36px; padding: 0 14px; font-size: 14px; flex: none; }
 .pick-list .icon-del.resend { color: var(--accent); }
 #inviteOnly { margin: -8px 0 16px; text-align: center; }
+
+/* ===== Double vérification ===== */
+.mfa-steps { text-align: left; margin: 12px 0 8px; padding-left: 22px; color: var(--ink-2); font-size: 14.5px; }
+.mfa-steps li { margin: 6px 0; }
+.mfa-qr { display: grid; place-items: center; margin: 6px auto 8px; width: 196px; height: 196px; background: #fff; border-radius: 14px; padding: 8px; }
+.mfa-qr img, .mfa-qr svg { width: 180px; height: 180px; }
+#mfaSecret { font-size: 12.5px; word-break: break-all; background: var(--surface-2); padding: 2px 6px; border-radius: 6px; user-select: all; }
+.mfa-code { text-align: center; font-size: 28px !important; letter-spacing: .4em; font-variant-numeric: tabular-nums; height: 60px !important; }

@@ -13,7 +13,7 @@ Web app (installable sur mobile) qui affiche la **base clients commune de l'équ
 - **Corbeille** : supprimer un client le met à la corbeille (bouton « Annuler » immédiat). Tout collaborateur peut restaurer ; seul un admin supprime définitivement.
 - **Secteurs** : chaque client peut avoir un commercial attitré. Filtre « Mes clients » ; l'admin attribue les clients et filtre par commercial ; un commercial peut prendre un client libre ou rendre les siens.
 - **Historique** : chaque création, modification, suppression et restauration est enregistrée (qui, quand, ancienne et nouvelle valeur), consultable sur la fiche.
-- **Administration** (menu ☰) : gérer les collaborateurs, choisir les champs HubSpot affichés, vider la base.
+- **Administration** (menu ☰) : gérer les collaborateurs, exporter la base, choisir les champs HubSpot affichés, vider la base.
 
 ## Architecture
 | Élément | Rôle |
@@ -31,6 +31,9 @@ Web app (installable sur mobile) qui affiche la **base clients commune de l'équ
 
 ## Sécurité
 - **Pas d'inscription libre** : les inscriptions sont désactivées dans Supabase (*Authentication → Sign In / Providers → Allow new users to sign up* : désactivé). Les comptes sont créés uniquement par invitation, via la fonction `inviter`. Elle vérifie que l'appelant est administrateur et que l'adresse figure dans `members`.
+- **Double vérification des administrateurs** : après le mot de passe, un code à 6 chiffres d'une appli d'authentification (Google Authenticator, Microsoft Authenticator…). L'appli s'enregistre par QR code à la première connexion. La règle est imposée **par la base** (`006_double_verification_admin.sql`) : une session administrateur sans code n'a accès à rien, même avec le bon mot de passe. Un e-mail d'alerte est envoyé si une méthode de vérification est ajoutée ou retirée du compte.
+  - *Téléphone perdu* : Supabase → **Authentication → Users** → le compte → supprimez le facteur MFA. À la connexion suivante, l'appli propose d'enregistrer un nouveau téléphone.
+- **Export réservé aux administrateurs** : le bouton « Exporter en CSV » n'apparaît que pour eux. Un collaborateur voit les clients dans l'appli : il ne faut inviter que des personnes de confiance, et les retirer de la liste dès leur départ (accès coupé immédiatement).
 - **Rien sans connexion** : l'appli n'interroge la base qu'après la connexion. De plus, le rôle `anon` (requêtes non connectées) n'a **aucun droit** sur les tables ni les fonctions, y compris les tables créées plus tard (`005_verrou_anon.sql`). Supabase répond « permission refusée ».
 - **Clés** : seule la clé publique `anon` figure dans le code (`config.js`). Les secrets sont hors du dépôt :
   - la clé `service_role` est une variable d'environnement des fonctions Supabase ;
@@ -53,7 +56,7 @@ Règles d'accès (**Row Level Security**, activée sur toutes les tables) :
 
 ### 2. Créer les tables
 1. Dans Supabase, ouvrez **SQL Editor → New query**.
-2. Collez le contenu de `supabase/migrations/001_init.sql` et cliquez sur **Run**. Recommencez avec `002_import_erp.sql`, puis `003_historique_corbeille.sql`, `004_secteurs.sql` et `005_verrou_anon.sql`.
+2. Collez le contenu de `supabase/migrations/001_init.sql` et cliquez sur **Run**. Recommencez avec `002_import_erp.sql`, puis `003_historique_corbeille.sql`, `004_secteurs.sql`, `005_verrou_anon.sql` et `006_double_verification_admin.sql`.
 3. Déclarez-vous administrateur. Dans une nouvelle requête, avec **votre** adresse :
    ```sql
    insert into public.members (email, role) values ('prenom.nom@societe.fr', 'admin');
@@ -135,11 +138,11 @@ Ils sont lancés automatiquement sur GitHub à chaque modification (onglet **Act
   ```bash
   npm run test:unit
   ```
-- **Interface** : 31 scénarios, rejoués sur mobile et sur ordinateur. Ils couvrent la connexion, l'accès refusé, l'import ERP (CSV et Excel), le ré-import sans doublon, les favoris, le rayon, la recherche, le trajet A → B, la corbeille, l'historique, les secteurs, HubSpot et l'administration. La base de données et les services externes sont simulés.
+- **Interface** : 36 scénarios, rejoués sur mobile et sur ordinateur. Ils couvrent la connexion, l'accès refusé, l'import ERP (CSV et Excel), le ré-import sans doublon, les favoris, le rayon, la recherche, le trajet A → B, la corbeille, l'historique, les secteurs, HubSpot et l'administration. La base de données et les services externes sont simulés.
   ```bash
   npm ci && npx playwright install chromium && npx playwright test
   ```
-- **Base de données** : 47 vérifications des règles d'accès sur un vrai PostgreSQL (collaborateur, administrateur, personne non autorisée, accès sans connexion).
+- **Base de données** : 54 vérifications des règles d'accès sur un vrai PostgreSQL (collaborateur, administrateur, personne non autorisée, accès sans connexion).
   ```bash
   PGHOST=localhost PGUSER=postgres bash tests/db/run.sh
   ```
