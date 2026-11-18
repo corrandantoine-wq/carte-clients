@@ -56,7 +56,7 @@ Règles d'accès (**Row Level Security**, activée sur toutes les tables) :
 
 ### 2. Créer les tables
 1. Dans Supabase, ouvrez **SQL Editor → New query**.
-2. Collez le contenu de `supabase/migrations/001_init.sql` et cliquez sur **Run**. Recommencez avec `002_import_erp.sql`, puis `003_historique_corbeille.sql`, `004_secteurs.sql`, `005_verrou_anon.sql` et `006_double_verification_admin.sql`.
+2. Collez le contenu de `supabase/migrations/001_init.sql` et cliquez sur **Run**. Recommencez avec `002_import_erp.sql`, puis `003_historique_corbeille.sql`, `004_secteurs.sql`, `005_verrou_anon.sql`, `006_double_verification_admin.sql` et `007_etat_compte.sql`.
 3. Déclarez-vous administrateur. Dans une nouvelle requête, avec **votre** adresse :
    ```sql
    insert into public.members (email, role) values ('prenom.nom@societe.fr', 'admin');
@@ -138,11 +138,11 @@ Ils sont lancés automatiquement sur GitHub à chaque modification (onglet **Act
   ```bash
   npm run test:unit
   ```
-- **Interface** : 36 scénarios, rejoués sur mobile et sur ordinateur. Ils couvrent la connexion, l'accès refusé, l'import ERP (CSV et Excel), le ré-import sans doublon, les favoris, le rayon, la recherche, le trajet A → B, la corbeille, l'historique, les secteurs, HubSpot et l'administration. La base de données et les services externes sont simulés.
+- **Interface** : 41 scénarios, rejoués sur mobile et sur ordinateur. Ils couvrent la connexion, l'accès refusé, l'import ERP (CSV et Excel), le ré-import sans doublon, les favoris, le rayon, la recherche, le trajet A → B, la corbeille, l'historique, les secteurs, HubSpot et l'administration. La base de données et les services externes sont simulés.
   ```bash
   npm ci && npx playwright install chromium && npx playwright test
   ```
-- **Base de données** : 54 vérifications des règles d'accès sur un vrai PostgreSQL (collaborateur, administrateur, personne non autorisée, accès sans connexion).
+- **Base de données** : 56 vérifications des règles d'accès sur un vrai PostgreSQL (collaborateur, administrateur, personne non autorisée, accès sans connexion).
   ```bash
   PGHOST=localhost PGUSER=postgres bash tests/db/run.sh
   ```

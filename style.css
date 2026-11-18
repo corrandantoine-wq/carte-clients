@@ -255,11 +255,11 @@ dialog[open] { animation: up .25s cubic-bezier(.2,.8,.2,1); }
 }
 
 /* ===== Ordinateur : panneau flottant à gauche ===== */
-@media (min-width: 900px) {
+@media (min-width: 900px), (orientation: landscape) and (max-height: 540px) and (min-width: 560px) {
   :root { --sheet-h: 0px; }
-  .searchbar { left: 16px; right: auto; width: 392px; top: 16px; }
+  .searchbar { left: 16px; right: auto; width: var(--panel-w); top: 16px; }
   .menu { left: 16px; top: 76px; }
-  .sheet { top: 80px; left: 16px; bottom: 16px; right: auto; width: 392px; height: auto !important;
+  .sheet { top: 80px; left: 16px; bottom: 16px; right: auto; width: var(--panel-w); height: auto !important;
     border-radius: var(--radius); box-shadow: var(--shadow); transition: none; padding-bottom: 0; }
   .sheet-grab { display: none; }
   .sheet-head { padding-top: 18px; }
@@ -267,8 +267,33 @@ dialog[open] { animation: up .25s cubic-bezier(.2,.8,.2,1); }
   .fabs { right: 16px; bottom: 28px !important; }
   .desktop-only { display: flex; }
   .leaflet-bottom.leaflet-right { bottom: 0 !important; }
-  .toast { left: calc(50% + 204px); top: 20px; }
+  .toast { left: calc(50% + var(--panel-w) / 2 + 8px); top: 20px; }
 }
+:root { --panel-w: 392px; }
+/* Téléphone tenu à l'horizontale : panneau plus étroit, marges réduites, éléments compacts. */
+@media (orientation: landscape) and (max-height: 540px) and (min-width: 560px) and (max-width: 899px) {
+  :root { --panel-w: min(340px, 46vw); }
+  .searchbar { top: calc(8px + var(--safe-top)); left: calc(8px + env(safe-area-inset-left, 0px)); height: 44px; }
+  .sheet { top: calc(58px + var(--safe-top)); left: calc(8px + env(safe-area-inset-left, 0px)); bottom: 8px; }
+  .menu { top: calc(58px + var(--safe-top)); left: calc(8px + env(safe-area-inset-left, 0px)); }
+  .sheet-head { padding-top: 10px; }
+  .sheet-head h1 { font-size: 18px; }
+  .fabs { right: calc(10px + env(safe-area-inset-right, 0px)); bottom: 12px !important; gap: 8px; }
+  .desktop-only { display: none; }
+  .fab { width: 42px; height: 42px; }
+  .fab-locate { width: 48px; height: 48px; }
+  .toast { top: 10px; }
+  dialog { max-height: 94dvh; }
+}
+/* Le menu défile quand l'écran est trop bas (téléphone à l'horizontale…). */
+.menu { max-height: calc(100dvh - 80px - var(--safe-top)); overflow-y: auto; overscroll-behavior: contain; }
+
+/* Liste des collaborateurs : adresse e-mail en entier sur sa ligne, réglages en dessous. */
+.pick-list li.member { flex-wrap: wrap; row-gap: 8px; }
+.pick-list li.member .grow { flex: 1 1 calc(100% - 52px); }
+.pick-list li.member .t { word-break: break-all; }
+.member-actions { display: flex; align-items: center; gap: 6px; margin-left: 50px; flex: 1 1 auto; }
+.member-actions select { flex: 0 1 auto; }
 
 /* ===== Comptes, favoris, HubSpot ===== */
 .sb-avatar { font-weight: 700; font-size: 14px; cursor: pointer; }

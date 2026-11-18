@@ -39,7 +39,9 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   const cacheKey = () => `carte-clients:cache:${user?.id}`;
   const saveCache = () => store(cacheKey(), { clients, favorites: [...favorites] });
   const $ = s => document.querySelector(s);
-  const isDesktop = () => window.matchMedia('(min-width: 900px)').matches;
+  // Panneau à gauche (ordinateur, ou téléphone tenu à l'horizontale) ; sinon panneau en bas.
+  const isDesktop = () => window.matchMedia('(min-width: 900px), (orientation: landscape) and (max-height: 540px) and (min-width: 560px)').matches;
+  const panelW = () => sheet.getBoundingClientRect().width || 392;
   const byId = id => clients.find(c => c.id === id);
   const canDelete = c => isAdmin || c.created_by === user?.id;
 
@@ -234,13 +236,13 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   // Centre la carte sur un point en tenant compte du panneau qui masque une partie de l'écran.
   function showPoint(latlng, zoom = map.getZoom(), animate = true) {
     const p = map.project(latlng, zoom);
-    const off = isDesktop() ? L.point(-(392 + 16) / 2, 0) : L.point(0, sheetHeight() / 2 - 30);
+    const off = isDesktop() ? L.point(-(panelW() + 16) / 2, 0) : L.point(0, sheetHeight() / 2 - 30);
     const target = map.unproject(p.add(off), zoom);
     animate ? map.flyTo(target, zoom, { duration: 0.6 }) : map.setView(target, zoom, { animate: false });
   }
   function fitVisible(bounds, maxZoom = 15) {
     const pad = isDesktop()
-      ? { paddingTopLeft: [430, 90], paddingBottomRight: [80, 40] }
+      ? { paddingTopLeft: [panelW() + 38, 90], paddingBottomRight: [80, 40] }
       : { paddingTopLeft: [30, 90], paddingBottomRight: [30, sheetHeight() + 20] };
     map.fitBounds(bounds, { ...pad, maxZoom });
   }
@@ -1168,14 +1170,16 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
       const rows = await q(sb.from('members').select('email,role').order('email'), 'Chargement des collaborateurs');
       const mine = user.email.toLowerCase();
       list.innerHTML = rows.map(m => `
-        <li data-email="${esc(m.email)}">
+        <li class="member" data-email="${esc(m.email)}">
           <div class="avatar sm" style="background:${colorFor(m.email)}">${esc(initials(m.email))}</div>
           <div class="grow"><div class="t">${esc(m.email)}${m.email === mine ? ' <span class="s">(vous)</span>' : ''}</div></div>
-          <select data-role ${m.email === mine ? 'disabled' : ''}>
-            <option value="user"${m.role === 'user' ? ' selected' : ''}>Collaborateur</option>
-            <option value="admin"${m.role === 'admin' ? ' selected' : ''}>Admin</option>
-          </select>
-          ${m.email === mine ? '' : `<button class="icon-del resend" data-invite aria-label="Renvoyer l’invitation" title="Renvoyer l’invitation">${I.mail}</button><button class="icon-del" data-del aria-label="Retirer">${I.trash}</button>`}
+          <div class="member-actions">
+            <select data-role ${m.email === mine ? 'disabled' : ''} aria-label="Rôle de ${esc(m.email)}">
+              <option value="user"${m.role === 'user' ? ' selected' : ''}>Collaborateur</option>
+              <option value="admin"${m.role === 'admin' ? ' selected' : ''}>Admin</option>
+            </select>
+            ${m.email === mine ? '' : `<button class="icon-del resend" data-invite aria-label="Renvoyer l’invitation" title="Renvoyer l’invitation">${I.mail}</button><button class="icon-del" data-del aria-label="Retirer">${I.trash}</button>`}
+          </div>
         </li>`).join('');
     } catch { list.innerHTML = '<li class="muted">Impossible de charger la liste.</li>'; }
   }
@@ -1183,21 +1187,34 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     e.preventDefault();
     const f = e.target.elements, email = f.email.value.trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('Adresse e-mail invalide.');
+    const btn = e.target.querySelector('.btn');
+    if (btn.disabled) return; // envoi déjà en cours (double clic)
+    btn.disabled = true; btn.textContent = 'Envoi…';
     try {
       await q(sb.from('members').upsert({ email, role: f.role.value }), 'Ajout impossible');
       f.email.value = ''; renderMembers(); await loadMemberEmails(); renderChips();
       await sendInvite(email);
-    } catch {}
+    } catch {} finally { btn.disabled = false; btn.textContent = 'Inviter'; }
   });
   // Invitation par e-mail, via la fonction serveur « inviter » (vérifie que l'appelant est administrateur).
+  const invitesInFlight = new Set(); // une seule invitation à la fois par adresse
+  const INVITE_MSG = {
+    'invité': e => `Invitation envoyée à ${e}.`,
+    'renvoyée': e => `Invitation renvoyée à ${e} (elle était encore en attente).`,
+    'déjà envoyée': e => `L’invitation de ${e} vient déjà de partir : inutile de recommencer.`,
+    'existe': e => `${e} a déjà un compte actif : il peut se connecter (ou utiliser « Mot de passe oublié »).`,
+  };
   async function sendInvite(email) {
+    if (invitesInFlight.has(email)) return;
+    invitesInFlight.add(email);
     try {
       const { data, error } = await sb.functions.invoke('inviter', { body: { email } });
       let msg = data?.error;
       if (error) { msg = error.message; try { msg = (await error.context.json()).error || msg; } catch {} }
       if (msg) return toast(`Invitation non envoyée : ${msg}`, 6000);
-      toast(data.status === 'existe' ? `${email} a déjà un compte : il peut se connecter (ou utiliser « Mot de passe oublié »).` : `Invitation envoyée à ${email}.`, 5000);
+      toast((INVITE_MSG[data.status] || INVITE_MSG['invité'])(email), 5000);
     } catch (e) { toast(`Invitation non envoyée : ${e.message || e}`, 6000); }
+    finally { invitesInFlight.delete(email); }
   }
   $('#membersList').addEventListener('change', async e => {
     const sel = e.target.closest('[data-role]'); if (!sel) return;

@@ -129,6 +129,13 @@ select pg_temp.check('collaborateur sans double vérification : accès normal', 
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000a', 'admin@soc.fr', 'aal2');
 select pg_temp.check('admin avec double vérification : accès complet', public.is_admin() and (select count(*) from public.members) = 2);
 
+-- État des comptes : réservé au serveur (fonction « inviter »)
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a', 'admin@soc.fr');
+select pg_temp.refused('un administrateur ne peut pas consulter l''état des comptes', $$select public.compte_etat('bob@soc.fr')$$);
+reset role;
+select pg_temp.check('état des comptes : actif / en attente / aucun', public.compte_etat('BOB@soc.fr') in ('actif', 'en_attente') and public.compte_etat('personne@x.fr') = 'aucun');
+set role authenticated;
+
 -- Personne non autorisée
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000c', 'intrus@gmail.com');
 select pg_temp.check('l''intrus ne voit aucun client', (select count(*) from public.clients) = 0);

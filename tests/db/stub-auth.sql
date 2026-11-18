@@ -5,7 +5,7 @@ do $$ begin create role anon nologin; exception when duplicate_object then null;
 do $$ begin create role service_role nologin bypassrls; exception when duplicate_object then null; end $$;
 create schema if not exists auth;
 grant usage on schema auth to authenticated, anon;
-create table if not exists auth.users (id uuid primary key, email text);
+create table if not exists auth.users (id uuid primary key, email text, email_confirmed_at timestamptz default now(), last_sign_in_at timestamptz);
 create or replace function auth.jwt() returns jsonb language sql stable as
   $$ select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb $$;
 create or replace function auth.uid() returns uuid language sql stable as
