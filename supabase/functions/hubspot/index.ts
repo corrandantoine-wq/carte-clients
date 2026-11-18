@@ -44,8 +44,8 @@ let portalId: number | null = null;
 let propDefs: Map<string, any> | null = null;
 let propDefsAt = 0;
 
-async function getPortalId() {
-  if (portalId == null) portalId = (await hs("/account-info/v3/details")).portalId;
+async function getPortalId(): Promise<number> {
+  if (portalId == null) portalId = (await hs("/account-info/v3/details")).portalId as number;
   return portalId;
 }
 async function getPropDefs() {
