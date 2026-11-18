@@ -1,7 +1,7 @@
 // Tests de la synchronisation HubSpot (fonction Supabase), lancés avec Deno :
 //   CARTE_CLIENTS_TEST=1 deno test --node-modules-dir=auto --allow-env --allow-net --allow-read --allow-sys tests/deno/
 import { assertEquals } from "jsr:@std/assert@1";
-import { planSync, toFiche } from "../../supabase/functions/hubspot/index.ts";
+import { compteGarde, planSync, toFiche } from "../../supabase/functions/hubspot/index.ts";
 
 const H = ["ID HubSpot", "Code client", "Nom", "Adresse", "Adresse 2", "Code postal", "Ville", "Téléphone", "Site web"];
 const fiche = (...r: string[]) => toFiche(H, r);
@@ -43,4 +43,15 @@ Deno.test("adresse modifiée : le client sera relocalisé ; le code client de l'
 Deno.test("deux fiches HubSpot avec le même code client : pas de conflit", () => {
   const p = planSync([fiche("1", "C1", "A", "", "", "", "", "", ""), fiche("2", "C1", "B", "", "", "", "", "", "")], []);
   assertEquals(p.inserts.map((c) => c.code_client), ["C1", null]);
+});
+
+Deno.test("filtre : seuls les comptes de livraison sont gardés", () => {
+  const options = [{ value: "livraison", label: "Compte livraison" }, { value: "facturation", label: "Compte facturation" }];
+  assertEquals(compteGarde("livraison", ["Livraison"], options), true);           // valeur interne, majuscules ignorées
+  assertEquals(compteGarde("livraison", ["compte LIVRAISON"], options), true);    // libellé affiché dans HubSpot
+  assertEquals(compteGarde("facturation", ["Livraison"], options), false);
+  assertEquals(compteGarde("", ["Livraison"], options), false);                   // type non renseigné : écarté
+  assertEquals(compteGarde("facturation;livraison", ["Livraison"], options), true); // compte des deux types
+  assertEquals(compteGarde("Livraison", ["livraison"]), true);                    // champ texte, accents/majuscules ignorés
+  assertEquals(compteGarde("facturation", []), true);                             // aucun filtre configuré : tout est gardé
 });

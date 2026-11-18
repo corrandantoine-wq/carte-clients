@@ -43,4 +43,4 @@ jobs:
             echo "::error title=Synchronisation HubSpot échouée::$(cat resultat.json)"
             exit 1
           fi
-          jq -r '"\(.fiches_hubspot) fiches HubSpot : \(.ajoutes) ajoutées, \(.mis_a_jour) mises à jour, \(.inchanges) inchangées, \(.localises) adresses localisées, \(.non_localises) non localisées."' resultat.json >> "$GITHUB_STEP_SUMMARY"
+          jq -r '"\(.fiches_hubspot) fiches HubSpot gardées (filtre : \(.filtre), \(.fiches_ecartees_par_le_filtre) écartées) : \(.ajoutes) ajoutées, \(.mis_a_jour) mises à jour, \(.inchanges) inchangées, \(.localises) adresses localisées, \(.non_localises) non localisées."' resultat.json >> "$GITHUB_STEP_SUMMARY"

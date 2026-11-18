@@ -72,11 +72,13 @@ test('importer le fichier client depuis HubSpot : nouveaux clients et mise à jo
       ['1001', 'Boulangerie Dupont SAS', '12 rue de Rivoli', '', '75004', 'Paris', '0102030405', 'dupont.fr'],
       ['1002', 'Crèmerie Lyonnaise', '3 place Bellecour', '', '69002', 'Lyon', '', ''],
     ],
+    hubspotEcartees: 3, // comptes de facturation écartés par la fonction serveur
   });
   await login(page);
   await page.click('#userBtn');
   await page.click('[data-action=hsimport]');
   await expect(page.locator('#impFileInfo')).toContainText('HubSpot · 2 lignes');
+  await expect(page.locator('#toastMsg')).toContainText('3 autres comptes écartés : seuls les comptes « Livraison » sont repris');
   await expect(page.locator('select[data-field=hubspot_id]')).toHaveValue('0');
   await expect(page.locator('#impSummary')).toContainText('1 nouveau client');
   await expect(page.locator('#impSummary')).toContainText('(même fiche HubSpot)');

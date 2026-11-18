@@ -968,10 +968,11 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     toast('Récupération du fichier client HubSpot…', 60000);
     try {
       const res = await hubspot('export');
-      if (!res.rows?.length) return toast('Aucune fiche trouvée dans HubSpot.', 5000);
+      if (!res.rows?.length) return toast(res.ecartees ? `Aucun compte « ${res.filtre} » trouvé dans HubSpot (${pl(res.ecartees, 'autre compte écarté', 'autres comptes écartés')}).` : 'Aucune fiche trouvée dans HubSpot.', 8000);
       openTable('HubSpot', { rows: [res.headers, ...res.rows], encoding: res.object === 'contacts' ? 'contacts HubSpot' : 'entreprises HubSpot' });
       if (res.truncated) toast('HubSpot contient plus de 20 000 fiches : seules les 20 000 premières sont proposées.', 8000);
-      else toast(pl(res.rows.length, 'fiche HubSpot récupérée', 'fiches HubSpot récupérées'), 3000);
+      else toast(pl(res.rows.length, 'fiche HubSpot récupérée', 'fiches HubSpot récupérées') +
+        (res.ecartees ? ` (${pl(res.ecartees, 'autre compte écarté', 'autres comptes écartés')} : seuls les comptes « ${res.filtre} » sont repris)` : ''), 6000);
     } catch (e) { toast('HubSpot : ' + (e.message || e), 8000); }
     finally { hsImporting = false; }
   }

@@ -115,7 +115,7 @@
       if (body.action === 'export') { // fichier client HubSpot (entreprises), réservé aux admins
         if (!isAdmin()) return { data: { error: 'Réservé aux administrateurs.' } };
         if (db.hubspotOff) return { data: { error: 'HubSpot n\'est pas encore configuré (secret HUBSPOT_TOKEN manquant).' } };
-        return { data: { object: 'companies', truncated: false,
+        return { data: { object: 'companies', truncated: false, ecartees: db.hubspotEcartees || 0, filtre: 'Livraison',
           headers: ['ID HubSpot', 'Nom', 'Adresse', 'Adresse 2', 'Code postal', 'Ville', 'Téléphone', 'Site web'],
           rows: db.hubspotCompanies || [] } };
       }
