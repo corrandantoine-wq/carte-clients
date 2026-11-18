@@ -13,7 +13,7 @@ Web app (installable sur mobile) qui affiche la **base clients commune de l'équ
 - **Corbeille** : supprimer un client le met à la corbeille (bouton « Annuler » immédiat). Tout collaborateur peut restaurer ; seul un admin supprime définitivement.
 - **Secteurs** : chaque client peut avoir un commercial attitré. Filtre « Mes clients » ; l'admin attribue les clients et filtre par commercial ; un commercial peut prendre un client libre ou rendre les siens.
 - **Historique** : chaque création, modification, suppression et restauration est enregistrée (qui, quand, ancienne et nouvelle valeur), consultable sur la fiche.
-- **Administration** (menu ☰) : gérer les collaborateurs, exporter la base, choisir les champs HubSpot affichés, vider la base.
+- **Administration** (menu ☰) : gérer les collaborateurs, exporter la base, importer le fichier client HubSpot, choisir les champs HubSpot affichés, vider la base.
 
 ## Architecture
 | Élément | Rôle |
@@ -90,6 +90,13 @@ La clé « anon » est faite pour être publique. Ne mettez **jamais** la clé *
    - Faites de même pour la fonction `inviter` (`supabase/functions/inviter/index.ts`), indispensable pour inviter les collaborateurs.
 3. Dans **Edge Functions → Secrets**, ajoutez `HUBSPOT_TOKEN` avec le jeton copié.
    - Les clients sont liés aux **entreprises** HubSpot par défaut. Pour les lier aux **contacts**, ajoutez aussi le secret `HUBSPOT_OBJECT` = `contacts`, et les scopes `crm.objects.contacts.read` et `crm.schemas.contacts.read`.
+   - Facultatif : si vos fiches HubSpot contiennent le code client de l'ERP, ajoutez le secret `HUBSPOT_CODE_CLIENT` avec le **nom interne** de ce champ (ex. `code_client`). Les imports HubSpot et ERP mettront alors à jour les mêmes clients.
+   - **Seuls les comptes de livraison sont repris** (pas les comptes de facturation) : l'appli lit le champ HubSpot **« Type de compte »** et ne garde que les fiches dont la valeur contient « Livraison » (majuscules et accents ignorés). Le filtre s'applique à l'import, à la synchronisation automatique et à la recherche « Lier à une fiche HubSpot ». Si ce champ est introuvable, l'import s'arrête avec un message plutôt que de tout reprendre. Pour changer : secrets `HUBSPOT_FILTRE_CHAMP` (libellé ou nom interne du champ, ou `aucun` pour tout reprendre) et `HUBSPOT_FILTRE_VALEUR` (valeurs gardées, séparées par des virgules).
+4. **Importer le fichier client HubSpot** (administrateur) : menu ☰ → **Importer depuis HubSpot**. L'appli récupère toutes les fiches, puis affiche le même écran que l'import d'un fichier : colonnes, aperçu, puis localisation des adresses. Chaque client reste relié à sa fiche HubSpot. Un nouvel import met à jour les clients déjà présents (même fiche HubSpot ou même code client) sans créer de doublons, et ne touche jamais aux notes saisies dans l'appli.
+5. **Synchronisation automatique** (lundi et jeudi matin) : la base se met à jour toute seule depuis HubSpot.
+   - Choisissez une longue phrase aléatoire et ajoutez-la deux fois, sous le même nom `HUBSPOT_SYNC_SECRET` : dans Supabase (*Edge Functions → Secrets*) et dans GitHub (*Settings → Secrets and variables → Actions*).
+   - Règles : les fiches HubSpot nouvelles sont ajoutées ; les clients reliés à une fiche HubSpot (ou ayant le même code client) sont mis à jour avec les informations **remplies** dans HubSpot ; les notes, favoris, secteurs et codes clients de l'ERP sont conservés ; un client mis à la corbeille dans l'appli y reste ; une fiche supprimée dans HubSpot n'efface rien dans l'appli. Les nouvelles adresses sont localisées automatiquement.
+   - Suivi : onglet **Actions → Synchronisation HubSpot** sur GitHub (bouton **Run workflow** pour lancer une synchronisation tout de suite). En cas d'échec, GitHub vous prévient par e-mail.
 
 ### 6. Mettre en ligne et inviter l'équipe
 1. Publiez (fusion dans `main` → GitHub Pages).
@@ -138,7 +145,7 @@ Ils sont lancés automatiquement sur GitHub à chaque modification (onglet **Act
   ```bash
   npm run test:unit
   ```
-- **Interface** : 41 scénarios, rejoués sur mobile et sur ordinateur. Ils couvrent la connexion, l'accès refusé, l'import ERP (CSV et Excel), le ré-import sans doublon, les favoris, le rayon, la recherche, le trajet A → B, la corbeille, l'historique, les secteurs, HubSpot et l'administration. La base de données et les services externes sont simulés.
+- **Interface** : 43 scénarios, rejoués sur mobile et sur ordinateur. Ils couvrent la connexion, l'accès refusé, l'import ERP (CSV et Excel), le ré-import sans doublon, les favoris, le rayon, la recherche, le trajet A → B, la corbeille, l'historique, les secteurs, HubSpot et l'administration. La base de données et les services externes sont simulés.
   ```bash
   npm ci && npx playwright install chromium && npx playwright test
   ```

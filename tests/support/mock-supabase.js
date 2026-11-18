@@ -64,7 +64,7 @@
       } else if (this.op === 'insert' || this.op === 'upsert') {
         out = this.p.map(r => {
           const row = { ...r };
-          if (this.t === 'clients') Object.assign(row, { id: crypto.randomUUID(), created_by: uid(), hubspot_id: r.hubspot_id ?? null, deleted_at: r.deleted_at ?? null, assigned_to: r.assigned_to ?? null });
+          if (this.t === 'clients') Object.assign(row, { id: r.id ?? crypto.randomUUID(), created_by: uid(), hubspot_id: r.hubspot_id ?? null, deleted_at: r.deleted_at ?? null, assigned_to: r.assigned_to ?? null });
           if (this.t === 'favorites') row.user_id = uid();
           if (this.op === 'upsert') { const k = this.key; const ex = row[k] != null && db[this.t].find(x => x[k] === row[k]); if (ex) { const before = { ...ex }; Object.assign(ex, r); if (this.t === 'clients') logUpdate(before, ex); return { ...ex }; } }
           db[this.t].push(row); if (this.t === 'clients') log('création', row); return row;
@@ -112,6 +112,13 @@
         { id: '1002', name: body.q + ' Lyon', detail: '69007 Lyon' }] } };
       if (body.action === 'get') return { data: { id: body.id, url: 'https://app.hubspot.com/contacts/123/company/' + body.id,
         fields: db.crm_fields.map(f => ({ label: f.label, value: { name: 'Boulangerie Dupont SAS', lifecyclestage: 'Client', notes_last_contacted: '4 novembre 2026' }[f.property] || '' })) } };
+      if (body.action === 'export') { // fichier client HubSpot (entreprises), réservé aux admins
+        if (!isAdmin()) return { data: { error: 'Réservé aux administrateurs.' } };
+        if (db.hubspotOff) return { data: { error: 'HubSpot n\'est pas encore configuré (secret HUBSPOT_TOKEN manquant).' } };
+        return { data: { object: 'companies', truncated: false, ecartees: db.hubspotEcartees || 0, filtre: 'Livraison',
+          headers: ['ID HubSpot', 'Nom', 'Adresse', 'Adresse 2', 'Code postal', 'Ville', 'Téléphone', 'Site web'],
+          rows: db.hubspotCompanies || [] } };
+      }
       if (body.action === 'properties') return { data: { properties: [
         { name: 'name', label: 'Nom de l’entreprise' }, { name: 'lifecyclestage', label: 'Étape du cycle de vie' },
         { name: 'notes_last_contacted', label: 'Dernier contact' }, { name: 'annualrevenue', label: 'Chiffre d’affaires annuel' },

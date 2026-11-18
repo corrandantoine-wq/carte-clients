@@ -956,14 +956,36 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   async function openImport(file) {
     let table;
     try { table = await readTable(file); } catch (e) { return toast('Impossible de lire ce fichier : ' + (e.message || e), 6000); }
+    openTable(file.name, table);
+  }
+
+  // Import depuis HubSpot : le serveur renvoie le fichier client sous forme de tableau,
+  // qui passe ensuite par le même écran que l'import d'un fichier (colonnes, aperçu, localisation).
+  let hsImporting = false;
+  async function importHubspot() {
+    if (hsImporting) return;
+    hsImporting = true;
+    toast('Récupération du fichier client HubSpot…', 60000);
+    try {
+      const res = await hubspot('export');
+      if (!res.rows?.length) return toast(res.ecartees ? `Aucun compte « ${res.filtre} » trouvé dans HubSpot (${pl(res.ecartees, 'autre compte écarté', 'autres comptes écartés')}).` : 'Aucune fiche trouvée dans HubSpot.', 8000);
+      openTable('HubSpot', { rows: [res.headers, ...res.rows], encoding: res.object === 'contacts' ? 'contacts HubSpot' : 'entreprises HubSpot' });
+      if (res.truncated) toast('HubSpot contient plus de 20 000 fiches : seules les 20 000 premières sont proposées.', 8000);
+      else toast(pl(res.rows.length, 'fiche HubSpot récupérée', 'fiches HubSpot récupérées') +
+        (res.ecartees ? ` (${pl(res.ecartees, 'autre compte écarté', 'autres comptes écartés')} : seuls les comptes « ${res.filtre} » sont repris)` : ''), 6000);
+    } catch (e) { toast('HubSpot : ' + (e.message || e), 8000); }
+    finally { hsImporting = false; }
+  }
+
+  function openTable(name, table) {
     const rows = (table.rows || []).filter(r => r.some(v => String(v ?? '').trim()));
     if (rows.length < 2) return toast('Le fichier ne contient pas de lignes de clients.', 5000);
     const seen = {};
     imp.headers = rows[0].map((h, i) => { h = String(h ?? '').trim() || `Colonne ${i + 1}`; seen[h] = (seen[h] || 0) + 1; return seen[h] > 1 ? `${h} (${seen[h]})` : h; });
     imp.data = rows.slice(1);
     imp.mapping = guessMapping(imp.headers, load(MAPPING_KEY, {}));
-    imp.file = file.name;
-    $('#impFileInfo').textContent = `${file.name} · ${imp.data.length.toLocaleString('fr-FR')} lignes · ${imp.headers.length} colonnes · ${table.encoding}`;
+    imp.file = name;
+    $('#impFileInfo').textContent = `${name} · ${imp.data.length.toLocaleString('fr-FR')} lignes · ${imp.headers.length} colonnes · ${table.encoding}`;
     $('#impMap').hidden = false; $('#impRun').hidden = true;
     $('#impGo').hidden = false; $('#impGo').disabled = false; $('#impGo').textContent = 'Importer';
     $('#impCancel').textContent = 'Annuler';
@@ -1001,10 +1023,11 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     const p = planImport(imp.data, imp.mapping, clients), parts = [];
     if (p.creates.length + p.noCode.length) parts.push(`<b>${pl(p.creates.length + p.noCode.length, 'nouveau client', 'nouveaux clients')}</b>`);
     if (p.updates.length) parts.push(`<b>${pl(p.updates.length, 'client déjà présent mis à jour', 'clients déjà présents mis à jour')}</b> (même code client)`);
+    if (p.hsUpdates.length) parts.push(`<b>${pl(p.hsUpdates.length, 'client déjà présent mis à jour', 'clients déjà présents mis à jour')}</b> (même fiche HubSpot)`);
     if (p.dupInFile > 0) parts.push(pl(p.dupInFile, 'ligne en double dans le fichier ignorée', 'lignes en double dans le fichier ignorées'));
     if (p.skipped) parts.push(pl(p.skipped, 'ligne sans nom ignorée', 'lignes sans nom ignorées'));
     let warn = '';
-    if (imp.mapping.code_client == null) warn = '<br>⚠️ Sans colonne « Code client », un nouvel import du même fichier créera des doublons.';
+    if (imp.mapping.code_client == null && imp.mapping.hubspot_id == null) warn = '<br>⚠️ Sans colonne « Code client », un nouvel import du même fichier créera des doublons.';
     sum.className = 'imp-summary' + (warn ? ' warn' : '');
     sum.innerHTML = parts.join(' · ') + warn;
   }
@@ -1016,7 +1039,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   const impBar = pct => { $('#impBar').style.width = Math.round(pct) + '%'; };
 
   $('#impGo').addEventListener('click', async () => {
-    const p = planImport(imp.data, imp.mapping, clients), total = p.updates.length + p.creates.length + p.noCode.length;
+    const p = planImport(imp.data, imp.mapping, clients), total = p.updates.length + p.hsUpdates.length + p.creates.length + p.noCode.length;
     if (!total) return toast('Aucune ligne à importer.');
     // Mémorise la correspondance des colonnes pour le prochain import du même format.
     const maps = load(MAPPING_KEY, {}); maps[mappingKey(imp.headers)] = imp.mapping; store(MAPPING_KEY, maps);
@@ -1031,7 +1054,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
       // 1. Envoi : mise à jour par code client, sinon ajout.
       impStep(0, 'on');
       const prep = c => {
-        const old = p.byCode.get(c.code_client);
+        const old = c.id ? clients.find(x => x.id === c.id) : p.byCode.get(c.code_client);
         if (!('lat' in c)) { // pas de coordonnées dans le fichier : on garde celles connues si l'adresse n'a pas changé
           const same = old && ['adresse', 'code_postal', 'ville'].every(k => !(k in c) || (c[k] || '') === (old[k] || ''));
           c.lat = same ? old.lat : null; c.lng = same ? old.lng : null;
@@ -1043,6 +1066,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
       // Clients déjà connus : les notes saisies dans l'appli ne sont jamais remplacées par celles de l'ERP.
       const updates = p.updates.map(c => { c = prep(c); delete c.notes; return c; });
       const creates = p.creates.map(prep);
+      const hsUpdates = p.hsUpdates.map(c => { c = prep(c); delete c.notes; return c; });
       const plain = p.noCode.map(c => ({ ...c, code_client: null }));
       const saved = [];
       const BATCH = 500;
@@ -1053,6 +1077,11 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
           saved.push(...res.map(clean)); done += res.length;
           impStep(0, 'on', `Enregistrement des clients… ${n(done)}/${n(total)}`); impBar(done / total * 50);
         }
+      }
+      for (let i = 0; i < hsUpdates.length; i += BATCH) { // clients reconnus par leur fiche HubSpot
+        const res = await q(sb.from('clients').upsert(hsUpdates.slice(i, i + BATCH), { onConflict: 'id' }).select(COLS), 'Import');
+        saved.push(...res.map(clean)); done += res.length;
+        impStep(0, 'on', `Enregistrement des clients… ${n(done)}/${n(total)}`); impBar(done / total * 50);
       }
       for (let i = 0; i < plain.length; i += BATCH) {
         const res = await q(sb.from('clients').insert(plain.slice(i, i + BATCH)).select(COLS), 'Import');
@@ -1075,7 +1104,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
       impStep(2, 'done', 'Import terminé');
       const created = p.creates.length + p.noCode.length;
       const miss = geo.total - geo.ok;
-      $('#impResult').innerHTML = `<b>${pl(created, 'client ajouté', 'clients ajoutés')}</b> · <b>${pl(p.updates.length, 'mis à jour', 'mis à jour')}</b>` +
+      $('#impResult').innerHTML = `<b>${pl(created, 'client ajouté', 'clients ajoutés')}</b> · <b>${pl(p.updates.length + p.hsUpdates.length, 'mis à jour', 'mis à jour')}</b>` +
         (miss > 0 ? `<br>${miss > 1 ? `${n(miss)} adresses n’ont pas pu être localisées` : 'Une adresse n’a pas pu être localisée'} : retrouvez ${miss > 1 ? 'ces clients' : 'ce client'} dans la liste avec le badge « non localisé » pour corriger.` : '');
       $('#impResult').className = 'imp-summary' + (geo.total > geo.ok ? ' warn' : '');
       setTimeout(() => { if (!me) fitAll(); }, 400);
@@ -1083,7 +1112,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
       const cur = [...$('#impSteps').children].findIndex(li => li.className === 'on');
       if (cur >= 0) impStep(cur, 'err');
       $('#impResult').className = 'imp-summary warn';
-      $('#impResult').textContent = 'L’import a été interrompu. Les clients déjà envoyés sont enregistrés : relancez le même fichier pour terminer (les clients ayant un code ne seront pas dupliqués).';
+      $('#impResult').textContent = 'L’import a été interrompu. Les clients déjà envoyés sont enregistrés : relancez le même import pour terminer (les clients ayant un code client ou une fiche HubSpot ne seront pas dupliqués).';
     } finally { delete impDlg.dataset.busy; }
   });
   impDlg.addEventListener('cancel', e => { if (impDlg.dataset.busy) e.preventDefault(); });
@@ -1301,6 +1330,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     if (action === 'geocode') geocodeMissing();
     if (action === 'members') { membersDlg.showModal(); renderMembers(); }
     if (action === 'crmfields') openFields();
+    if (action === 'hsimport') importHubspot();
     if (action === 'logout') { await sb.auth.signOut(); }
     if (action === 'trash') openTrash();
     if (action === 'clear') {
