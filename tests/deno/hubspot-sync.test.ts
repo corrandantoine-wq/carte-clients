@@ -1,5 +1,5 @@
 // Tests de la synchronisation HubSpot (fonction Supabase), lancés avec Deno :
-//   CARTE_CLIENTS_TEST=1 deno test --allow-env --allow-net --allow-read --allow-sys tests/deno/
+//   CARTE_CLIENTS_TEST=1 deno test --node-modules-dir=auto --allow-env --allow-net --allow-read --allow-sys tests/deno/
 import { assertEquals } from "jsr:@std/assert@1";
 import { planSync, toFiche } from "../../supabase/functions/hubspot/index.ts";
 
