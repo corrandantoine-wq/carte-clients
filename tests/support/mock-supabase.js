@@ -64,7 +64,7 @@
       } else if (this.op === 'insert' || this.op === 'upsert') {
         out = this.p.map(r => {
           const row = { ...r };
-          if (this.t === 'clients') Object.assign(row, { id: crypto.randomUUID(), created_by: uid(), hubspot_id: r.hubspot_id ?? null, deleted_at: r.deleted_at ?? null, assigned_to: r.assigned_to ?? null });
+          if (this.t === 'clients') Object.assign(row, { id: r.id ?? crypto.randomUUID(), created_by: uid(), hubspot_id: r.hubspot_id ?? null, deleted_at: r.deleted_at ?? null, assigned_to: r.assigned_to ?? null });
           if (this.t === 'favorites') row.user_id = uid();
           if (this.op === 'upsert') { const k = this.key; const ex = row[k] != null && db[this.t].find(x => x[k] === row[k]); if (ex) { const before = { ...ex }; Object.assign(ex, r); if (this.t === 'clients') logUpdate(before, ex); return { ...ex }; } }
           db[this.t].push(row); if (this.t === 'clients') log('création', row); return row;
