@@ -24,7 +24,8 @@ read -rp "Remplacer les données de l'appli par cette sauvegarde ? Tapez RESTAUR
 # 1. Comptes des collaborateurs : seulement s'ils manquent (projet Supabase recréé).
 if [ -f "$DIR/comptes.dump" ] && [ "$(psql "$DB" -tAc 'select count(*) from auth.users')" = "0" ]; then
   echo "→ Restauration des comptes…"
-  pg_restore --data-only --no-owner --no-privileges -d "$DB" "$DIR/comptes.dump"
+  pg_restore --data-only --no-owner --no-privileges -d "$DB" "$DIR/comptes.dump" \
+    || echo "⚠️ Avertissement pendant la restauration des comptes : vérifiez le message ci-dessus."
 fi
 # 2. Données de l'appli (tables, règles d'accès, fonctions, historique).
 echo "→ Restauration des données de l'appli…"

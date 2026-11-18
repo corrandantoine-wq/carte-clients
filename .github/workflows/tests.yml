@@ -38,7 +38,7 @@ jobs:
     timeout-minutes: 10
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17   # même version que la base Supabase
         env:
           POSTGRES_PASSWORD: postgres
         ports: ['5432:5432']
