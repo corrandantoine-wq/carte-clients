@@ -93,11 +93,18 @@
     rpc: async (fn, { items }) => { let n = 0; for (const it of items) { const c = db.clients.find(x => x.id === it.id); if (c) { c.lat = it.lat; c.lng = it.lng; n++; } } return { data: n, error: null }; },
     channel: () => ({ on() { return this; }, subscribe() { return this; }, unsubscribe() {} }),
     functions: { invoke: async (name, { body }) => {
-      if (name === 'inviter') { // reproduit supabase/functions/inviter
+      if (name === 'inviter') { // reproduit supabase/functions/inviter (avec le délai d'un vrai appel réseau)
         if (!isAdmin()) return { data: { error: 'Réservé aux administrateurs.' } };
         if (!db.members.some(m => m.email === body.email)) return { data: { error: 'Ajoutez d\'abord cette adresse à la liste des collaborateurs.' } };
-        if (db.users.some(u => u.email === body.email)) return { data: { status: 'existe' } };
-        db.invites.push(body.email); return { data: { status: 'invité' } };
+        db.inviteCalls = (db.inviteCalls || 0) + 1;
+        const before = db.users.find(u => u.email === body.email);
+        await new Promise(r => setTimeout(r, 400));
+        if (before?.confirmed) return { data: { status: 'existe' } };
+        db.invites.push(body.email);
+        if (before) return { data: { status: 'renvoyée' } };
+        if (db.users.some(u => u.email === body.email)) return { data: { status: 'déjà envoyée' } }; // appel simultané
+        db.users.push({ id: 'u-' + body.email, email: body.email, password: null, confirmed: false });
+        return { data: { status: 'invité' } };
       }
       await new Promise(r => setTimeout(r, 300));
       if (body.action === 'search') return { data: { results: [

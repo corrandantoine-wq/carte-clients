@@ -4,7 +4,11 @@
 // La clé secrète service_role est fournie par Supabase au serveur (variable d'environnement) :
 // elle n'apparaît jamais dans l'appli ni dans le dépôt.
 //
-// Appel (POST JSON) : { email }  →  { status: "invité" | "existe" }  ou  { error }
+// Appel (POST JSON) : { email }  →  { status } ou { error }
+//   status : "invité"        nouvelle invitation envoyée
+//            "renvoyée"      invitation encore en attente : renvoyée
+//            "déjà envoyée"  une invitation vient de partir (double clic, deux appels simultanés)
+//            "existe"        la personne a déjà un compte actif
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 
 const APP_URL = Deno.env.get("APP_URL") ?? "https://corrandantoine-wq.github.io/carte-clients/";
@@ -36,15 +40,23 @@ Deno.serve(async (req) => {
   const { data: member } = await asCaller.from("members").select("email").eq("email", email).maybeSingle();
   if (!member) return json({ error: "Ajoutez d'abord cette adresse à la liste des collaborateurs." }, 400);
 
-  // 3. Envoi de l'invitation (opération d'administration, côté serveur uniquement).
+  // 3. Opérations d'administration, côté serveur uniquement.
   const service = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+  const etat = async () => (await service.rpc("compte_etat", { p_email: email })).data as string | null;
+
+  const avant = await etat();
+  if (avant === "actif") return json({ status: "existe" });
+
   const { error } = await service.auth.admin.inviteUserByEmail(email, { redirectTo: APP_URL });
-  if (error) {
-    if (/already.*(registered|exists)|email_exists/i.test(`${error.message} ${(error as any).code ?? ""}`)) return json({ status: "existe" });
-    console.error(error);
-    return json({ error: error.message }, 502);
-  }
-  return json({ status: "invité" });
+  if (!error) return json({ status: avant === "en_attente" ? "renvoyée" : "invité" });
+
+  // Deux demandes simultanées pour la même adresse : la seconde se heurte au compte que la
+  // première vient de créer (« Database error saving new user »). Ce n'est pas une erreur.
+  const apres = await etat();
+  if (apres === "actif") return json({ status: "existe" });
+  if (apres === "en_attente") return json({ status: "déjà envoyée" });
+  console.error(error);
+  return json({ error: error.message }, 502);
 });

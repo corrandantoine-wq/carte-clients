@@ -13,12 +13,36 @@ test('inviter un collaborateur : ajout à la liste et e-mail d’invitation', as
   expect(await page.evaluate(() => window.__db.invites)).toEqual(['claire@soc.fr']);
 });
 
-test('renvoyer l’invitation à quelqu’un qui a déjà un compte', async ({ page }) => {
+test('renvoyer l’invitation à quelqu’un qui a déjà un compte actif', async ({ page }) => {
   await login(page);
   await page.click('#userBtn');
   await page.click('[data-action=members]');
   await page.click('#membersList li[data-email="bob@soc.fr"] [data-invite]');
-  await expect(page.locator('#toastMsg')).toContainText('bob@soc.fr a déjà un compte');
+  await expect(page.locator('#toastMsg')).toContainText('bob@soc.fr a déjà un compte actif');
+});
+
+test('double clic sur « Inviter » : une seule invitation, aucun message d’erreur', async ({ page }) => {
+  await login(page);
+  await page.click('#userBtn');
+  await page.click('[data-action=members]');
+  await page.fill('#memberForm [name=email]', 'claire@soc.fr');
+  await page.dblclick('#memberForm .btn');
+  await expect(page.locator('#memberForm .btn')).toBeDisabled(); // bloqué pendant l'envoi
+  await expect(page.locator('#toastMsg')).toHaveText('Invitation envoyée à claire@soc.fr.');
+  await expect(page.locator('#memberForm .btn')).toBeEnabled();
+  expect(await page.evaluate(() => window.__db.inviteCalls)).toBe(1);
+  expect(await page.evaluate(() => window.__db.invites)).toEqual(['claire@soc.fr']);
+});
+
+test('renvoyer une invitation encore en attente', async ({ page }) => {
+  await seed(page, { members: [{ email: 'gre@soc.fr', role: 'user' }], users: [{ id: 'u-gre', email: 'gre@soc.fr', password: null, confirmed: false }] });
+  await login(page);
+  await page.click('#userBtn');
+  await page.click('[data-action=members]');
+  const resend = page.locator('#membersList li[data-email="gre@soc.fr"] [data-invite]');
+  await resend.click(); await resend.click(); // deux appuis rapides
+  await expect(page.locator('#toastMsg')).toHaveText('Invitation renvoyée à gre@soc.fr (elle était encore en attente).');
+  expect(await page.evaluate(() => window.__db.inviteCalls)).toBe(1);
 });
 
 test('choisir les champs HubSpot affichés', async ({ page }) => {
