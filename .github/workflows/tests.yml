@@ -32,6 +32,20 @@ jobs:
           path: playwright-report
           retention-days: 7
 
+  hubspot:
+    name: Synchronisation HubSpot (fonction Supabase)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Tests de la synchronisation
+        env:
+          CARTE_CLIENTS_TEST: '1'
+        run: deno test --allow-env --allow-net --allow-read --allow-sys tests/deno/
+
   base:
     name: Base de données (règles de sécurité, sauvegarde)
     runs-on: ubuntu-latest

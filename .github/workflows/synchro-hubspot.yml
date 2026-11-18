@@ -1,0 +1,46 @@
+# Synchronisation de la base clients avec HubSpot, deux fois par semaine (lundi et jeudi matin).
+# GitHub appelle la fonction Supabase « hubspot », qui fait tout le travail côté serveur :
+# nouvelles fiches HubSpot ajoutées, fiches modifiées mises à jour, adresses localisées.
+#
+# À configurer une fois, le jour où HubSpot est branché :
+#   1. Supabase → Edge Functions → Secrets : HUBSPOT_SYNC_SECRET = une longue phrase aléatoire
+#   2. GitHub → Settings → Secrets and variables → Actions → New repository secret :
+#      HUBSPOT_SYNC_SECRET = la même phrase
+# Tant que ce secret n'existe pas dans GitHub, la tâche s'arrête sans erreur.
+name: Synchronisation HubSpot
+
+on:
+  schedule:
+    - cron: '41 4 * * 1,4'   # lundi et jeudi vers 5 h 41 (heure de Paris en hiver)
+  workflow_dispatch:         # bouton « Run workflow » pour synchroniser tout de suite
+
+permissions:
+  contents: read
+
+jobs:
+  synchro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Synchroniser
+        env:
+          SYNC_SECRET: ${{ secrets.HUBSPOT_SYNC_SECRET }}
+        run: |
+          if [ -z "$SYNC_SECRET" ]; then
+            echo "::warning title=Synchronisation HubSpot non configurée::Ajoutez le secret HUBSPOT_SYNC_SECRET (voir le README, section HubSpot)."
+            exit 0
+          fi
+          # Adresse du projet et clé publique « anon » : lues dans config.js (elles ne sont pas secrètes).
+          URL=$(grep -oP "supabaseUrl:\s*'\K[^']+" config.js)
+          ANON=$(grep -oP "supabaseAnonKey:\s*'\K[^']+" config.js)
+          CODE=$(curl -sS -o resultat.json -w '%{http_code}' --max-time 500 -X POST "$URL/functions/v1/hubspot" \
+            -H "Authorization: Bearer $ANON" -H "x-sync-secret: $SYNC_SECRET" -H 'Content-Type: application/json' \
+            -d '{"action":"sync"}')
+          echo "Réponse ($CODE) :"; cat resultat.json; echo
+          if [ "$CODE" != "200" ]; then
+            echo "::error title=Synchronisation HubSpot échouée::$(cat resultat.json)"
+            exit 1
+          fi
+          jq -r '"\(.fiches_hubspot) fiches HubSpot : \(.ajoutes) ajoutées, \(.mis_a_jour) mises à jour, \(.inchanges) inchangées, \(.localises) adresses localisées, \(.non_localises) non localisées."' resultat.json >> "$GITHUB_STEP_SUMMARY"

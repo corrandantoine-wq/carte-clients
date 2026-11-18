@@ -92,6 +92,10 @@ La clé « anon » est faite pour être publique. Ne mettez **jamais** la clé *
    - Les clients sont liés aux **entreprises** HubSpot par défaut. Pour les lier aux **contacts**, ajoutez aussi le secret `HUBSPOT_OBJECT` = `contacts`, et les scopes `crm.objects.contacts.read` et `crm.schemas.contacts.read`.
    - Facultatif : si vos fiches HubSpot contiennent le code client de l'ERP, ajoutez le secret `HUBSPOT_CODE_CLIENT` avec le **nom interne** de ce champ (ex. `code_client`). Les imports HubSpot et ERP mettront alors à jour les mêmes clients.
 4. **Importer le fichier client HubSpot** (administrateur) : menu ☰ → **Importer depuis HubSpot**. L'appli récupère toutes les fiches, puis affiche le même écran que l'import d'un fichier : colonnes, aperçu, puis localisation des adresses. Chaque client reste relié à sa fiche HubSpot. Un nouvel import met à jour les clients déjà présents (même fiche HubSpot ou même code client) sans créer de doublons, et ne touche jamais aux notes saisies dans l'appli.
+5. **Synchronisation automatique** (lundi et jeudi matin) : la base se met à jour toute seule depuis HubSpot.
+   - Choisissez une longue phrase aléatoire et ajoutez-la deux fois, sous le même nom `HUBSPOT_SYNC_SECRET` : dans Supabase (*Edge Functions → Secrets*) et dans GitHub (*Settings → Secrets and variables → Actions*).
+   - Règles : les fiches HubSpot nouvelles sont ajoutées ; les clients reliés à une fiche HubSpot (ou ayant le même code client) sont mis à jour avec les informations **remplies** dans HubSpot ; les notes, favoris, secteurs et codes clients de l'ERP sont conservés ; un client mis à la corbeille dans l'appli y reste ; une fiche supprimée dans HubSpot n'efface rien dans l'appli. Les nouvelles adresses sont localisées automatiquement.
+   - Suivi : onglet **Actions → Synchronisation HubSpot** sur GitHub (bouton **Run workflow** pour lancer une synchronisation tout de suite). En cas d'échec, GitHub vous prévient par e-mail.
 
 ### 6. Mettre en ligne et inviter l'équipe
 1. Publiez (fusion dans `main` → GitHub Pages).
