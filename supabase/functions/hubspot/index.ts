@@ -21,12 +21,14 @@ const TOKEN = Deno.env.get("HUBSPOT_TOKEN") ?? "";
 const CODE_PROP = Deno.env.get("HUBSPOT_CODE_CLIENT") ?? "";
 const EXPORT_MAX = 20_000; // garde-fou : au-delà, l'import se fait par fichier
 const SYNC_SECRET = Deno.env.get("HUBSPOT_SYNC_SECRET") ?? "";
-// Filtre des comptes HubSpot repris dans l'appli (ex. seulement les comptes de livraison, pas ceux de facturation).
-//   HUBSPOT_FILTRE_CHAMP  : nom interne du champ HubSpot qui indique le type de compte (ex. "type_de_compte")
-//   HUBSPOT_FILTRE_VALEUR : valeur(s) gardée(s), séparées par des virgules (ex. "Livraison")
+// Filtre des comptes HubSpot repris dans l'appli : seulement les comptes de LIVRAISON
+// (la société a aussi des comptes de facturation, qui ne doivent pas apparaître).
+//   HUBSPOT_FILTRE_CHAMP  : le champ HubSpot qui indique le type de compte, par son libellé
+//                           (« Type de compte ») ou son nom interne. « aucun » = pas de filtre.
+//   HUBSPOT_FILTRE_VALEUR : valeur(s) gardée(s), séparées par des virgules.
 // La comparaison ignore majuscules et accents, et accepte la valeur interne comme le libellé affiché.
-const FILTRE_CHAMP = (Deno.env.get("HUBSPOT_FILTRE_CHAMP") ?? "").trim();
-const FILTRE_VALEURS = (Deno.env.get("HUBSPOT_FILTRE_VALEUR") ?? "").split(",").map((v) => v.trim()).filter(Boolean);
+const FILTRE_CHAMP = (Deno.env.get("HUBSPOT_FILTRE_CHAMP") ?? "Type de compte").trim();
+const FILTRE_VALEURS = (Deno.env.get("HUBSPOT_FILTRE_VALEUR") ?? "Livraison").split(",").map((v) => v.trim()).filter(Boolean);
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -85,21 +87,30 @@ const simplifier = (v: string) => String(v ?? "").toLowerCase().normalize("NFD")
 
 // Garde-t-on cette fiche ? raw : valeur brute du champ HubSpot (plusieurs valeurs possibles, séparées par « ; »).
 // options : choix de la liste déroulante HubSpot (valeur interne → libellé), pour accepter l'un ou l'autre.
+// Une valeur convient si elle contient le mot cherché : « Livraison » garde aussi « Compte de livraison ».
 export function compteGarde(raw: string | null | undefined, valeurs: string[], options: { value: string; label: string }[] = []) {
   if (!valeurs.length) return true; // pas de filtre configuré
-  const voulues = new Set(valeurs.map(simplifier));
-  return String(raw ?? "").split(";").filter(Boolean).some((v) => {
-    const label = options.find((o) => o.value === v)?.label ?? "";
-    return voulues.has(simplifier(v)) || (label !== "" && voulues.has(simplifier(label)));
-  });
+  const voulues = valeurs.map(simplifier);
+  const convient = (t: string) => t !== "" && voulues.some((w) => simplifier(t).includes(w));
+  return String(raw ?? "").split(";").filter(Boolean).some((v) =>
+    convient(v) || convient(options.find((o) => o.value === v)?.label ?? ""));
 }
 
+// Retrouve le champ par son nom interne ou par son libellé (« Type de compte »).
+export function trouverChamp(defs: Map<string, any>, champ: string) {
+  if (defs.has(champ)) return defs.get(champ);
+  const cible = simplifier(champ);
+  return [...defs.values()].find((d) => simplifier(d.label) === cible || simplifier(d.name) === cible.replace(/ /g, "_"));
+}
+
+// Renvoie { nom interne du champ, fonction de tri }, ou null si le filtre est désactivé.
+// Par sécurité, si le champ est introuvable, on s'arrête plutôt que de reprendre aussi les comptes de facturation.
 async function filtreActif() {
-  if (!FILTRE_CHAMP || !FILTRE_VALEURS.length) return null;
-  const def = (await getPropDefs()).get(FILTRE_CHAMP);
-  if (!def) throw new Error(`Le champ HubSpot « ${FILTRE_CHAMP} » (secret HUBSPOT_FILTRE_CHAMP) n'existe pas. Vérifiez son nom interne.`);
+  if (!FILTRE_CHAMP || simplifier(FILTRE_CHAMP) === "aucun" || !FILTRE_VALEURS.length) return null;
+  const def = trouverChamp(await getPropDefs(), FILTRE_CHAMP);
+  if (!def) throw new Error(`Le champ HubSpot « ${FILTRE_CHAMP} » est introuvable : impossible de ne garder que les comptes « ${FILTRE_VALEURS.join(", ")} ». Vérifiez son nom (secret HUBSPOT_FILTRE_CHAMP).`);
   const options = def.options ?? [];
-  return (props: Record<string, string> | undefined) => compteGarde(props?.[FILTRE_CHAMP], FILTRE_VALEURS, options);
+  return { champ: def.name as string, garde: (props: Record<string, string> | undefined) => compteGarde(props?.[def.name], FILTRE_VALEURS, options) };
 }
 
 // ---------- Lecture de tout le fichier client HubSpot ----------
@@ -116,14 +127,14 @@ function exportColumns(): [string, string][] {
 }
 
 async function fetchAll(cols: [string, string][]) {
-  const garde = await filtreActif();
-  const props = [...cols.map(([, p]) => p), ...(garde ? [FILTRE_CHAMP] : [])].join(",");
+  const filtre = await filtreActif();
+  const props = [...cols.map(([, p]) => p), ...(filtre ? [filtre.champ] : [])].join(",");
   const rows: string[][] = [];
   let after = "", ecartees = 0;
   do { // HubSpot renvoie 100 fiches par page
     const res = await hs(`/crm/v3/objects/${OBJECT}?limit=100&archived=false&properties=${encodeURIComponent(props)}${after ? `&after=${after}` : ""}`);
     for (const r of res.results ?? []) {
-      if (garde && !garde(r.properties)) { ecartees++; continue; } // ex. compte de facturation
+      if (filtre && !filtre.garde(r.properties)) { ecartees++; continue; } // ex. compte de facturation
       rows.push(cols.map(([, p]) => p === "hs_object_id" ? String(r.id) : String(r.properties?.[p] ?? "").trim()));
     }
     after = res.paging?.next?.after ?? "";
@@ -308,16 +319,16 @@ async function handler(req: Request) {
       const q = String(body.q ?? "").trim();
       if (q.length < 2) return json({ results: [] });
       const nameProp = OBJECT === "contacts" ? "lastname" : "name";
-      const garde = await filtreActif();
+      const filtre = await filtreActif();
       const props = OBJECT === "contacts"
         ? ["firstname", "lastname", "email", "phone", "city", "zip", "address"]
         : ["name", "domain", "phone", "city", "zip", "address"];
-      if (garde) props.push(FILTRE_CHAMP);
+      if (filtre) props.push(filtre.champ);
       const res = await hs(`/crm/v3/objects/${OBJECT}/search`, {
         method: "POST",
-        body: JSON.stringify({ query: q, limit: garde ? 50 : 10, properties: props, sorts: [{ propertyName: nameProp, direction: "ASCENDING" }] }),
+        body: JSON.stringify({ query: q, limit: filtre ? 50 : 10, properties: props, sorts: [{ propertyName: nameProp, direction: "ASCENDING" }] }),
       });
-      const results = (res.results ?? []).filter((r: any) => !garde || garde(r.properties)).slice(0, 10);
+      const results = (res.results ?? []).filter((r: any) => !filtre || filtre.garde(r.properties)).slice(0, 10);
       return json({
         results: results.map((r: any) => ({
           id: r.id,

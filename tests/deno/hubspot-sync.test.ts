@@ -1,7 +1,7 @@
 // Tests de la synchronisation HubSpot (fonction Supabase), lancés avec Deno :
 //   CARTE_CLIENTS_TEST=1 deno test --node-modules-dir=auto --allow-env --allow-net --allow-read --allow-sys tests/deno/
 import { assertEquals } from "jsr:@std/assert@1";
-import { compteGarde, planSync, toFiche } from "../../supabase/functions/hubspot/index.ts";
+import { compteGarde, planSync, toFiche, trouverChamp } from "../../supabase/functions/hubspot/index.ts";
 
 const H = ["ID HubSpot", "Code client", "Nom", "Adresse", "Adresse 2", "Code postal", "Ville", "Téléphone", "Site web"];
 const fiche = (...r: string[]) => toFiche(H, r);
@@ -48,10 +48,19 @@ Deno.test("deux fiches HubSpot avec le même code client : pas de conflit", () =
 Deno.test("filtre : seuls les comptes de livraison sont gardés", () => {
   const options = [{ value: "livraison", label: "Compte livraison" }, { value: "facturation", label: "Compte facturation" }];
   assertEquals(compteGarde("livraison", ["Livraison"], options), true);           // valeur interne, majuscules ignorées
-  assertEquals(compteGarde("livraison", ["compte LIVRAISON"], options), true);    // libellé affiché dans HubSpot
+  assertEquals(compteGarde("cpt_liv", ["Livraison"], [{ value: "cpt_liv", label: "Compte de livraison" }]), true); // libellé affiché
   assertEquals(compteGarde("facturation", ["Livraison"], options), false);
   assertEquals(compteGarde("", ["Livraison"], options), false);                   // type non renseigné : écarté
   assertEquals(compteGarde("facturation;livraison", ["Livraison"], options), true); // compte des deux types
   assertEquals(compteGarde("Livraison", ["livraison"]), true);                    // champ texte, accents/majuscules ignorés
   assertEquals(compteGarde("facturation", []), true);                             // aucun filtre configuré : tout est gardé
+});
+
+Deno.test("le champ « Type de compte » est retrouvé par son libellé ou son nom interne", () => {
+  const defs = new Map([["name", { name: "name", label: "Nom" }], ["type_de_compte", { name: "type_de_compte", label: "Type de compte" }]]);
+  assertEquals(trouverChamp(defs, "Type de compte")?.name, "type_de_compte");
+  assertEquals(trouverChamp(defs, "type de compte")?.name, "type_de_compte");
+  assertEquals(trouverChamp(defs, "type_de_compte")?.name, "type_de_compte");
+  assertEquals(trouverChamp(new Map([["x123", { name: "x123", label: "Type de compte" }]]), "Type de compte")?.name, "x123");
+  assertEquals(trouverChamp(defs, "Autre"), undefined);
 });
