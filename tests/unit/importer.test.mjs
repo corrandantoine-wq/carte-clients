@@ -50,3 +50,19 @@ test('préparation : nouveaux, mis à jour, sans code, doublons et lignes vides'
   assert.equal(p.skipped, 1);
   assert.equal(p.dupInFile, 1);
 });
+
+test('import HubSpot : reconnaissance des colonnes et mise à jour par fiche HubSpot', () => {
+  const h = ['ID HubSpot', 'Nom', 'Adresse', 'Adresse 2', 'Code postal', 'Ville', 'Téléphone', 'Site web'];
+  const m = guessMapping(h);
+  assert.deepEqual(fieldOf(h, m), { hubspot_id: 'ID HubSpot', nom: 'Nom', adresse: 'Adresse', adresse2: 'Adresse 2', code_postal: 'Code postal', ville: 'Ville', telephone: 'Téléphone' });
+  const data = [
+    ['1001', 'Boulangerie Dupont SAS', '12 rue de Rivoli', '', '75004', 'Paris', '0102030405', 'dupont.fr'],
+    ['1002', 'Nouvelle entreprise', '', '', '69007', 'Lyon', '', ''],
+    ['1001', 'Doublon', '', '', '', '', '', ''],
+  ];
+  const p = planImport(data, m, [{ id: 'c1', code_client: 'CLI9', hubspot_id: '1001', nom: 'Dupont' }]);
+  assert.deepEqual(p.hsUpdates.map(c => [c.id, c.nom]), [['c1', 'Boulangerie Dupont SAS']]);
+  assert.equal(p.hsUpdates[0].code_client, undefined); // le code client de l'ERP n'est pas effacé
+  assert.deepEqual(p.noCode.map(c => c.nom), ['Nouvelle entreprise']);
+  assert.equal(p.dupInFile, 1);
+});

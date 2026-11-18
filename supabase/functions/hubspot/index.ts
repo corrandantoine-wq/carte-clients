@@ -5,11 +5,16 @@
 //   { action: "search", q }        → recherche d'entreprises HubSpot (pour lier un client)
 //   { action: "get", id }          → valeurs des champs choisis (table crm_fields) pour une entreprise
 //   { action: "properties" }       → liste des champs HubSpot disponibles (admin uniquement)
+//   { action: "export" }           → tout le fichier client HubSpot sous forme de tableau,
+//                                    repris par l'écran d'import de l'appli (admin uniquement)
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 
 const HUBSPOT = "https://api.hubapi.com";
 const OBJECT = Deno.env.get("HUBSPOT_OBJECT") ?? "companies"; // "companies" ou "contacts"
 const TOKEN = Deno.env.get("HUBSPOT_TOKEN") ?? "";
+// Facultatif : nom interne du champ HubSpot qui contient le code client de l'ERP (ex. "code_client").
+const CODE_PROP = Deno.env.get("HUBSPOT_CODE_CLIENT") ?? "";
+const EXPORT_MAX = 20_000; // garde-fou : au-delà, l'import se fait par fichier
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -125,6 +130,30 @@ Deno.serve(async (req) => {
           .map((p: any) => ({ name: p.name, label: p.label, group: p.groupName }))
           .sort((a, b) => a.label.localeCompare(b.label, "fr")),
       });
+    }
+
+    if (body.action === "export") {
+      const { data: admin } = await db.rpc("is_admin");
+      if (!admin) return json({ error: "Réservé aux administrateurs." }, 403);
+      // Colonnes nommées comme dans l'écran d'import, pour être reconnues automatiquement.
+      const cols: [string, string][] = OBJECT === "contacts"
+        ? [["ID HubSpot", "hs_object_id"], ["Prénom", "firstname"], ["Nom", "lastname"], ["Société", "company"],
+           ["Adresse", "address"], ["Code postal", "zip"], ["Ville", "city"], ["Téléphone", "phone"],
+           ["Mobile", "mobilephone"], ["E-mail", "email"]]
+        : [["ID HubSpot", "hs_object_id"], ["Nom", "name"], ["Adresse", "address"], ["Adresse 2", "address2"],
+           ["Code postal", "zip"], ["Ville", "city"], ["Téléphone", "phone"], ["Site web", "domain"]];
+      if (CODE_PROP) cols.splice(1, 0, ["Code client", CODE_PROP]);
+      const props = cols.map(([, p]) => p).join(",");
+      const rows: string[][] = [];
+      let after = "";
+      do { // HubSpot renvoie 100 fiches par page
+        const res = await hs(`/crm/v3/objects/${OBJECT}?limit=100&archived=false&properties=${encodeURIComponent(props)}${after ? `&after=${after}` : ""}`);
+        for (const r of res.results ?? []) {
+          rows.push(cols.map(([, p]) => p === "hs_object_id" ? String(r.id) : String(r.properties?.[p] ?? "").trim()));
+        }
+        after = res.paging?.next?.after ?? "";
+      } while (after && rows.length < EXPORT_MAX);
+      return json({ headers: cols.map(([h]) => h), rows, truncated: !!after, object: OBJECT });
     }
 
     return json({ error: "Action inconnue" }, 400);

@@ -112,6 +112,13 @@
         { id: '1002', name: body.q + ' Lyon', detail: '69007 Lyon' }] } };
       if (body.action === 'get') return { data: { id: body.id, url: 'https://app.hubspot.com/contacts/123/company/' + body.id,
         fields: db.crm_fields.map(f => ({ label: f.label, value: { name: 'Boulangerie Dupont SAS', lifecyclestage: 'Client', notes_last_contacted: '4 novembre 2026' }[f.property] || '' })) } };
+      if (body.action === 'export') { // fichier client HubSpot (entreprises), réservé aux admins
+        if (!isAdmin()) return { data: { error: 'Réservé aux administrateurs.' } };
+        if (db.hubspotOff) return { data: { error: 'HubSpot n\'est pas encore configuré (secret HUBSPOT_TOKEN manquant).' } };
+        return { data: { object: 'companies', truncated: false,
+          headers: ['ID HubSpot', 'Nom', 'Adresse', 'Adresse 2', 'Code postal', 'Ville', 'Téléphone', 'Site web'],
+          rows: db.hubspotCompanies || [] } };
+      }
       if (body.action === 'properties') return { data: { properties: [
         { name: 'name', label: 'Nom de l’entreprise' }, { name: 'lifecyclestage', label: 'Étape du cycle de vie' },
         { name: 'notes_last_contacted', label: 'Dernier contact' }, { name: 'annualrevenue', label: 'Chiffre d’affaires annuel' },

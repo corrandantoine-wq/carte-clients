@@ -77,17 +77,28 @@ export function rowToClient(r, m) {
 }
 
 // Prépare l'import : dédoublonne par code client et sépare nouveaux / mis à jour / sans code.
+// Sans code client, un client déjà relié à la même fiche HubSpot est mis à jour (import HubSpot).
 export function planImport(data, mapping, clients) {
   const byCode = new Map(clients.filter(c => c.code_client).map(c => [c.code_client, c]));
-  const inFile = new Map(), noCode = [];
-  let skipped = 0;
+  const byHs = new Map(clients.filter(c => c.hubspot_id).map(c => [c.hubspot_id, c]));
+  const inFile = new Map(), hsInFile = new Map(), noCode = [];
+  let skipped = 0, plain = 0;
   for (const r of data) {
     const c = rowToClient(r, mapping);
     if (!c.nom) { skipped++; continue; }
     if (c.code_client) { if (!inFile.has(c.code_client)) inFile.set(c.code_client, c); } // doublon : on garde la 1re ligne
-    else noCode.push(c);
+    else if (c.hubspot_id) { if (!hsInFile.has(c.hubspot_id)) hsInFile.set(c.hubspot_id, c); }
+    else { noCode.push(c); plain++; }
   }
-  const updates = [], creates = [];
-  for (const [code, c] of inFile) (byCode.has(code) ? updates : creates).push(c);
-  return { byCode, updates, creates, noCode, skipped, dupInFile: data.length - skipped - noCode.length - inFile.size };
+  const updates = [], creates = [], hsUpdates = [];
+  for (const [code, c] of inFile) {
+    const linked = !byCode.has(code) && c.hubspot_id && byHs.get(c.hubspot_id);
+    if (linked && !linked.code_client) hsUpdates.push({ ...c, id: linked.id }); // client HubSpot connu, qui reçoit son code
+    else (byCode.has(code) ? updates : creates).push(c);
+  }
+  for (const [hs, c] of hsInFile) {
+    const old = byHs.get(hs);
+    if (old) hsUpdates.push({ ...c, id: old.id }); else noCode.push(c);
+  }
+  return { byCode, byHs, updates, creates, hsUpdates, noCode, skipped, dupInFile: data.length - skipped - plain - inFile.size - hsInFile.size };
 }
