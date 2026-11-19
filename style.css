@@ -495,3 +495,17 @@ dialog[open] { animation: up .25s cubic-bezier(.2,.8,.2,1); }
 .mfa-qr img, .mfa-qr svg { width: 180px; height: 180px; }
 #mfaSecret { font-size: 12.5px; word-break: break-all; background: var(--surface-2); padding: 2px 6px; border-radius: 6px; user-select: all; }
 .mfa-code { text-align: center; font-size: 28px !important; letter-spacing: .4em; font-variant-numeric: tabular-nums; height: 60px !important; }
+
+/* ===== Menu épuré : page principale + page « Gérer la base clients » ===== */
+.menu .grow { flex: 1; }
+.menu .chev { width: 18px; height: 18px; color: var(--ink-3); }
+.menu .menu-back { font-weight: 700; color: var(--ink); }
+
+/* Fiche client : 3 gros boutons au lieu de 5 */
+.d-actions .act { flex: 1 1 0; }
+.d-actions .act.more { flex: 0 0 74px; background: var(--surface-2); color: var(--ink-2); }
+
+/* Liste « Plus » */
+.action-list li .ai { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); flex: none; }
+.action-list li .ai svg { width: 18px; height: 18px; }
+.action-list { max-height: none; }

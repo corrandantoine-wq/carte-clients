@@ -8,12 +8,13 @@ Web app (installable sur mobile) qui affiche la **base clients commune de l'équ
 - **Favoris personnels** : chacun marque ses clients d'une étoile et peut n'afficher que ses favoris.
 - **HubSpot** : chaque client peut être relié à sa fiche HubSpot. La fiche affiche alors des champs du CRM, choisis par l'administrateur, avec un lien « Ouvrir dans HubSpot ».
 - **Temps de trajet A → B** entre deux clients, ou depuis sa position : durée, distance, heure d'arrivée et tracé sur la carte. Calcul par le service d'itinéraire de l'IGN, temps hors trafic.
-- **Position en direct**, choix du rayon (1 à 100 km), liste triée par distance, itinéraire Google Maps ou Waze, appel, e-mail.
+- **Position en direct**, choix du rayon (1 à 100 km), liste triée par distance. Fiche client avec 3 gros boutons : **Itinéraire** (Waze par défaut, Google Maps au choix, choix mémorisé), **Appeler**, **Plus** (temps de trajet, autre appli GPS, e-mail).
+- **Fluide sur le terrain** : l'appli s'ouvre tout de suite depuis le téléphone (mise à jour en arrière-plan), la liste se met à jour au plus toutes les 10 s en roulant, et seules les fiches modifiées par un collègue sont redessinées. Les adresses sans position sont localisées automatiquement.
 - **Import depuis un ERP** (CSV ou Excel) avec correspondance des colonnes, mise à jour par code client et géocodage par lot. Export CSV.
 - **Corbeille** : supprimer un client le met à la corbeille (bouton « Annuler » immédiat). Tout collaborateur peut restaurer ; seul un admin supprime définitivement.
 - **Secteurs** : chaque client peut avoir un commercial attitré. Filtre « Mes clients » ; l'admin attribue les clients et filtre par commercial ; un commercial peut prendre un client libre ou rendre les siens.
 - **Historique** : chaque création, modification, suppression et restauration est enregistrée (qui, quand, ancienne et nouvelle valeur), consultable sur la fiche.
-- **Administration** (menu ☰) : gérer les collaborateurs, exporter la base, choisir les champs HubSpot affichés, vider la base.
+- **Administration** (menu ☰ → **Gérer la base clients**) : gérer les collaborateurs, choisir les champs HubSpot affichés, exporter la base, vider la base. Le menu principal ne garde que l'usage quotidien.
 
 ## Architecture
 | Élément | Rôle |
@@ -95,8 +96,8 @@ La clé « anon » est faite pour être publique. Ne mettez **jamais** la clé *
 1. Publiez (fusion dans `main` → GitHub Pages).
 2. **Désactivez les inscriptions** : Supabase → *Authentication → Sign In / Providers* → décochez **Allow new users to sign up**.
 3. **Premier administrateur** : Supabase → *Authentication → Users → Invite user* avec votre adresse (déjà déclarée admin à l'étape 2 de l'installation). Suivez le lien reçu pour choisir votre mot de passe.
-4. Menu ☰ → **Collaborateurs** : saisissez l'adresse d'un collègue et cliquez sur **Inviter**. Il reçoit un e-mail pour choisir son mot de passe. Le bouton ✉ renvoie l'invitation si besoin.
-4. Menu ☰ → **Champs HubSpot affichés** : cochez les informations du CRM à montrer sur les fiches.
+4. Menu ☰ → **Gérer la base clients** → **Collaborateurs** : saisissez l'adresse d'un collègue et cliquez sur **Inviter**. Il reçoit un e-mail pour choisir son mot de passe. Le bouton ✉ renvoie l'invitation si besoin.
+4. Menu ☰ → **Gérer la base clients** → **Champs HubSpot affichés** : cochez les informations du CRM à montrer sur les fiches.
 
 ## Sauvegardes
 Chaque nuit, GitHub sauvegarde la base Supabase (workflow « Sauvegarde quotidienne »). Les données de l'appli et les comptes des collaborateurs sont **chiffrés** et conservés **30 jours** (onglet **Actions** → une exécution → **Artifacts**). La même tâche garde la base active : l'offre gratuite de Supabase la met en pause après 7 jours sans activité.
@@ -118,7 +119,7 @@ bash outils/restaurer.sh sauvegarde-AAAA-MM-JJ.tar.gz.gpg "CHAÎNE_DE_CONNEXION"
 Le script demande la phrase secrète, affiche le contenu, puis demande confirmation avant de **remplacer** les données de l'appli. Si le projet Supabase a été recréé, il restaure aussi les comptes. Il nécessite PostgreSQL 17 et `gpg`. Ce scénario est vérifié par les tests automatiques (`tests/db/sauvegarde.sh`).
 
 ## Importer la base clients (ERP, CSV, Excel)
-Menu ☰ → **Importer un fichier**. Formats acceptés :
+Menu ☰ → **Gérer la base clients** → **Importer un fichier**. Formats acceptés :
 - **CSV**, séparé par `;` ou `,`. L'encodage UTF-8 ou Windows est détecté automatiquement.
 - **Excel** (`.xlsx`, `.xls`) : la première feuille est lue.
 

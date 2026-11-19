@@ -47,5 +47,6 @@ test('collaborateur : pas de code demandé, et pas d’export', async ({ page })
 test('administrateur : l’export est disponible', async ({ page }) => {
   await login(page);
   await page.click('#userBtn');
+  await page.click('[data-action=manage]');
   await expect(page.locator('[data-action=export]')).toBeVisible();
 });

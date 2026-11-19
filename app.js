@@ -11,19 +11,21 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   const LEGACY_KEY = 'carte-clients:v1';        // ancienne base stockée dans le téléphone
   const SETTINGS_KEY = 'carte-clients:settings';
   const MAX_LIST = 300;
+  const GPS_REFRESH_MS = 10_000;
   const RADII = [1, 2, 5, 10, 25, 50, 100, 0]; // 0 = tous
   const COLS = 'id,code_client,nom,adresse,code_postal,ville,telephone,email,notes,lat,lng,hubspot_id,created_by,deleted_at,assigned_to';
 
   // ---------- État ----------
   let clients = [];
   let favorites = new Set();
-  const settings = Object.assign({ radius: 10, follow: true, layer: 'plan', favOnly: false, owner: '' }, load(SETTINGS_KEY, {}));
+  const settings = Object.assign({ radius: 10, follow: true, layer: 'plan', favOnly: false, owner: '', nav: 'waze' }, load(SETTINGS_KEY, {}));
   if (settings.onlyRadius === false) settings.radius = 0;
   delete settings.onlyRadius;
   let user = null;          // utilisateur Supabase connecté
   let isAdmin = false;
   let me = null;            // position { lat, lng, accuracy }
   let lastListPos = null;
+  let lastListAt = 0;       // heure du dernier rafraîchissement de la liste par le GPS
   let watchId = null;
   let query = '';
   let selectedId = null;
@@ -47,6 +49,9 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
 
   const distTo = c => (me && hasPos(c) ? haversine(me, c) : null);
   const inRadius = d => d != null && settings.radius > 0 && d <= settings.radius;
+  // Itinéraire avec l'appli de navigation choisie (Waze par défaut, Google Maps possible).
+  const NAV_NAMES = { waze: 'Waze', gmaps: 'Google Maps' };
+  const navUrl = (c, app = settings.nav) => (app === 'gmaps' ? routeUrl(c) : wazeUrl(c));
   const avatar = c => `<div class="avatar" style="background:${colorFor(c.nom)}">${esc(initials(c.nom))}</div>`;
 
   let toastTimer;
@@ -250,14 +255,15 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   // ---------- Rayon & favoris (chips) ----------
   function renderChips() {
     $('#chips').innerHTML =
+      // Un seul bouton pour le rayon (liste déroulante du téléphone) au lieu de 8 pastilles.
+      `<select class="chip chip-select radius-sel${settings.radius ? ' on' : ''}" id="radiusSel" aria-label="Rayon de recherche">
+         ${RADII.map(r => `<option value="${r}"${settings.radius === r ? ' selected' : ''}>${r ? `Rayon : ${r} km` : 'Rayon : tous'}</option>`).join('')}</select>` +
       `<button class="chip fav" data-fav aria-pressed="${settings.favOnly}">${I.star}Favoris${favorites.size ? ` · ${favorites.size}` : ''}</button>` +
       (isAdmin
         ? `<select class="chip chip-select${settings.owner ? ' on' : ''}" id="ownerSel" aria-label="Filtrer par commercial">
              <option value="">Tous les commerciaux</option><option value="me">Mes clients</option><option value="none">Non attribués</option>
              ${memberEmails.filter(e => e !== myEmail()).map(e => `<option value="${esc(e)}">${esc(e)}</option>`).join('')}</select>`
-        : `<button class="chip fav mine" data-mine aria-pressed="${settings.owner === 'me'}">${I.user}Mes clients</button>`) +
-      `<span class="chip-sep"></span>` +
-      RADII.map(r => `<button class="chip" role="radio" data-r="${r}" aria-checked="${settings.radius === r}">${r ? `${r} km` : 'Tous'}</button>`).join('');
+        : `<button class="chip fav mine" data-mine aria-pressed="${settings.owner === 'me'}">${I.user}Mes clients</button>`);
     const sel = $('#ownerSel');
     if (sel) { if (![...sel.options].some(o => o.value === settings.owner)) settings.owner = ''; sel.value = settings.owner; }
   }
@@ -266,20 +272,22 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     if (me && r) fitVisible(radiusCircle.getBounds()); else fitAll();
   }
   $('#chips').addEventListener('click', e => {
-    const b = e.target.closest('.chip'); if (!b) return;
+    const b = e.target.closest('button.chip'); if (!b) return;
     if (b.hasAttribute('data-mine')) { setOwner(settings.owner === 'me' ? '' : 'me'); return; }
     if (b.hasAttribute('data-fav')) {
       settings.favOnly = !settings.favOnly; saveSettings(); renderChips(); renderMarkers(); renderList();
       if (settings.favOnly && !favorites.size) toast('Aucun favori : ouvrez une fiche client et touchez l’étoile.', 3500);
       return;
     }
-    setRadius(+b.dataset.r);
   });
   function setOwner(v) {
     settings.owner = v; saveSettings(); renderChips(); renderMarkers(); renderList();
     if ($('#ownerSel')) $('#ownerSel').value = v;
   }
-  $('#chips').addEventListener('change', e => { if (e.target.id === 'ownerSel') setOwner(e.target.value); });
+  $('#chips').addEventListener('change', e => {
+    if (e.target.id === 'ownerSel') setOwner(e.target.value);
+    if (e.target.id === 'radiusSel') setRadius(+e.target.value);
+  });
   function updateRadiusCircle() {
     if (!me || !settings.radius) { map.removeLayer(radiusCircle); return; }
     radiusCircle.setLatLng([me.lat, me.lng]).setRadius(settings.radius * 1000);
@@ -343,7 +351,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
           <span class="dist${near ? ' near' : ''}">${fmtDist(d)}</span>
           <div class="quick">
             ${c.telephone ? `<a href="${esc(telUrl(c))}" aria-label="Appeler">${I.phone}</a>` : ''}
-            <a href="${esc(routeUrl(c))}" target="_blank" rel="noopener" aria-label="Itinéraire">${I.route}</a>
+            <a href="${esc(navUrl(c))}" target="_blank" rel="noopener" aria-label="Itinéraire avec ${NAV_NAMES[settings.nav]}">${I.route}</a>
           </div>
         </div>
       </li>`).join('') + (rows.length > MAX_LIST ? `<li class="empty">… et ${rows.length - MAX_LIST} autres. Affinez la recherche.</li>` : '');
@@ -361,19 +369,55 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
 
   function refresh() { renderList(); updateMarkerStates(); if (selectedId) renderDetail(); }
   let renderTimer;
-  function scheduleFullRender() {
+  const pendingIds = new Set(); // clients modifiés par un collègue, en attente d'affichage
+  let pendingAll = false;
+  function scheduleFullRender() { pendingAll = true; flushSoon(); }
+  function scheduleUpdate(id) { pendingIds.add(id); flushSoon(); }
+  function flushSoon() {
     clearTimeout(renderTimer);
-    renderTimer = setTimeout(() => { renderMarkers(); renderChips(); refresh(); saveCache(); }, 250);
+    renderTimer = setTimeout(() => {
+      // Quelques fiches modifiées : on ne touche qu'à leurs points. Beaucoup (import) : on redessine tout.
+      if (pendingAll || pendingIds.size > 200 || zoomPending) renderMarkers();
+      else for (const id of pendingIds) syncMarker(id);
+      pendingAll = false; pendingIds.clear();
+      renderChips(); refresh(); saveCache();
+    }, 250);
+  }
+  // Ajoute, déplace ou retire le point d'un seul client sur la carte.
+  function syncMarker(id) {
+    const c = byId(id), m = markers.get(id);
+    if (!c || !visibleOnMap(c)) { if (m) { cluster.removeLayer(m); markers.delete(id); } return; }
+    const icon = pinIcon(c, stateOf(c), favorites.has(c.id));
+    if (m) {
+      const ll = m.getLatLng();
+      if (ll.lat !== c.lat || ll.lng !== c.lng) { cluster.removeLayer(m); m.setLatLng([c.lat, c.lng]); cluster.addLayer(m); }
+      if (m.options.icon !== icon) m.setIcon(icon);
+      m.options.title = c.nom;
+      return;
+    }
+    const nm = L.marker([c.lat, c.lng], { icon, title: c.nom, near: stateOf(c) !== 'far', riseOnHover: true });
+    nm.on('click', () => onPinClick(c.id));
+    markers.set(c.id, nm); cluster.addLayer(nm);
   }
 
   // ---------- Fiche client ----------
   let detailFor = null;
+  // Distance et temps estimé jusqu'au client (mis à jour seul quand on se déplace).
+  function etaHtml(c) {
+    const d = distTo(c);
+    return d != null ? `<div class="d-eta"><span class="big${inRadius(d) ? '' : ' far'}">${fmtDist(d)}</span><span class="muted">≈ ${fmtEta(d)} en voiture (estimation)</span></div>`
+      : hasPos(c) ? '' : `<div class="d-eta"><span class="muted">Ce client n'est pas encore localisé sur la carte.</span></div>`;
+  }
+  function updateDetailEta() {
+    const c = byId(selectedId), el = $('#dEta');
+    if (c && el) { const html = etaHtml(c); if (el.innerHTML !== html) el.innerHTML = html; }
+  }
+
   function renderDetail() {
     const c = byId(selectedId); if (!c) return closeDetail();
     // La fiche est redessinée quand la position change : on garde l'historique ouvert s'il l'était.
     const keepHist = detailFor === c.id && $('#hist')?.open ? $('#histBody').innerHTML : null;
     detailFor = c.id;
-    const d = distTo(c);
     const fav = favorites.has(c.id);
     $('#favBtn').setAttribute('aria-pressed', fav);
     $('#favBtn').setAttribute('aria-label', fav ? 'Retirer des favoris' : 'Ajouter aux favoris');
@@ -382,14 +426,11 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
       : `<div class="d-row">${icon}<div><div class="lbl">${label}</div><div class="val">${esc(val)}</div></div></div>`;
     $('#detail').innerHTML = `
       <div class="d-head">${avatar(c)}<div><h2>${esc(c.nom)}</h2><div class="sub">${esc([c.code_postal, c.ville].filter(Boolean).join(' ') || 'Client')}</div></div></div>
-      ${d != null ? `<div class="d-eta"><span class="big${inRadius(d) ? '' : ' far'}">${fmtDist(d)}</span><span class="muted">≈ ${fmtEta(d)} en voiture (estimation)</span></div>`
-        : hasPos(c) ? '' : `<div class="d-eta"><span class="muted">Ce client n'est pas encore localisé sur la carte.</span></div>`}
+      <div id="dEta">${etaHtml(c)}</div>
       <div class="d-actions">
-        <a class="act primary" href="${esc(routeUrl(c))}" target="_blank" rel="noopener">${I.route}Itinéraire</a>
+        <a class="act primary" href="${esc(navUrl(c))}" target="_blank" rel="noopener" data-nav>${I.route}Itinéraire</a>
         <a class="act${c.telephone ? '' : ' disabled'}" href="${c.telephone ? esc(telUrl(c)) : '#'}">${I.phone}Appeler</a>
-        <button class="act${hasPos(c) ? '' : ' disabled'}" data-act="route">${I.ab}Trajet</button>
-        <a class="act" href="${esc(wazeUrl(c))}" target="_blank" rel="noopener">${I.car}Waze</a>
-        <a class="act${c.email ? '' : ' disabled'}" href="${c.email ? `mailto:${esc(c.email)}` : '#'}">${I.mail}E-mail</a>
+        <button class="act more" data-act="more" aria-label="Autres actions">${I.more}Plus</button>
       </div>
       <div class="d-rows">
         ${row(I.pin, 'Adresse', fullAddress(c), fullAddress(c) ? routeUrl(c) : null)}
@@ -445,6 +486,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
       try { await trashClient(c); } catch {}
     }
     if (act === 'route') openRoute({ id: c.id });
+    if (act === 'more') openMore(c);
     if (act === 'take' || act === 'release') {
       try { await updateClient(c.id, { assigned_to: act === 'take' ? myEmail() : null }); renderDetail(); renderList(); toast(act === 'take' ? 'Client ajouté à votre secteur' : 'Client retiré de votre secteur', 2000); } catch {}
     }
@@ -459,6 +501,34 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     const sel = e.target.closest('[data-assign]'); const c = byId(selectedId); if (!sel || !c) return;
     try { await updateClient(c.id, { assigned_to: sel.value || null }); renderDetail(); renderMarkers(); renderList(); toast(sel.value ? `Attribué à ${sel.value}` : 'Client non attribué', 2000); }
     catch { renderDetail(); }
+  });
+
+  // ---------- Autres actions (bouton « Plus ») ----------
+  const moreDlg = $('#moreDialog');
+  function openMore(c) {
+    const other = settings.nav === 'waze' ? 'gmaps' : 'waze';
+    const li = (attrs, icon, t, s = '') => `<li ${attrs}><span class="ai">${icon}</span><div class="grow"><div class="t">${t}</div>${s ? `<div class="s">${s}</div>` : ''}</div></li>`;
+    $('#moreTitle').textContent = c.nom;
+    $('#moreList').innerHTML = [
+      hasPos(c) ? li('class="click" data-more="route"', I.ab, 'Temps de trajet', 'Depuis ma position ou un autre client') : '',
+      li(`class="click" data-more="nav-other" data-href="${esc(navUrl(c, other))}"`, I.car, `Itinéraire avec ${NAV_NAMES[other]}`),
+      c.email ? li(`class="click" data-more="mail" data-href="mailto:${esc(c.email)}"`, I.mail, 'Envoyer un e-mail', esc(c.email)) : '',
+      li('class="click" data-more="nav-default"', I.route, 'Appli de navigation par défaut', `${NAV_NAMES[settings.nav]} · toucher pour passer à ${NAV_NAMES[other]}`),
+    ].join('');
+    moreDlg.showModal();
+  }
+  $('#moreList').addEventListener('click', e => {
+    const li = e.target.closest('[data-more]'); if (!li) return;
+    const c = byId(selectedId), act = li.dataset.more;
+    if (act === 'nav-default') {
+      settings.nav = settings.nav === 'waze' ? 'gmaps' : 'waze'; saveSettings();
+      toast(`Itinéraires ouverts avec ${NAV_NAMES[settings.nav]}`, 2000);
+      if (c) { renderDetail(); openMore(c); } renderList();
+      return;
+    }
+    moreDlg.close();
+    if (act === 'route' && c) openRoute({ id: c.id });
+    if (li.dataset.href) window.open(li.dataset.href, act === 'mail' ? '_self' : '_blank', 'noopener');
   });
 
   // ---------- Favoris ----------
@@ -504,7 +574,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     const d = st.data;
     const rows = d.fields.map(f => `<div class="crm-row"><span class="k">${esc(f.label)}</span><span class="v">${esc(f.value || '—')}</span></div>`).join('');
     return head(`<a href="${esc(d.url)}" target="_blank" rel="noopener">Ouvrir ↗</a>`) +
-      `<div class="crm-body">${rows || '<div class="crm-empty">Aucun champ configuré (menu → Champs HubSpot affichés).</div>'}</div>
+      `<div class="crm-body">${rows || '<div class="crm-empty">Aucun champ configuré (menu → Gérer la base clients → Champs HubSpot affichés).</div>'}</div>
        <div class="crm-foot"><button data-act="hs-link">Changer</button>&nbsp;&nbsp;<button data-act="hs-unlink">Délier</button></div>`;
   }
   async function loadCrm(c) {
@@ -793,8 +863,21 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     if (first && !selectedId) settings.radius ? fitVisible(radiusCircle.getBounds()) : fitAll();
     else if (settings.follow && !selectedId) showPoint([lat, lng], map.getZoom());
 
-    if (!lastListPos || haversine(lastListPos, me) > 0.015) { lastListPos = { ...me }; refresh(); }
+    // En voiture, la position change chaque seconde : on ne redessine pas tout à chaque fois.
+    // Liste et couleurs des points : au plus toutes les 10 s (ou tout de suite au 1er point GPS).
+    // Fiche ouverte : seule la distance est mise à jour.
+    const moved = !lastListPos || haversine(lastListPos, me) > 0.015;
+    if (first || (moved && Date.now() - lastListAt >= GPS_REFRESH_MS)) {
+      lastListPos = { ...me }; lastListAt = Date.now();
+      if (!listBusy()) renderList();
+      updateMarkerStates();
+    }
+    if (selectedId) updateDetailEta();
   }
+  // La liste n'est pas redessinée pendant que le doigt la fait défiler (évite les sauts).
+  let listTouchAt = 0;
+  for (const ev of ['touchstart', 'touchmove', 'wheel', 'scroll']) $('#list').addEventListener(ev, () => { listTouchAt = Date.now(); }, { passive: true });
+  const listBusy = () => Date.now() - listTouchAt < 1500;
 
   function onPositionError(err) {
     const msg = { 1: 'Localisation refusée : autorisez-la dans les réglages du navigateur.', 2: 'Position indisponible.', 3: 'La localisation met trop de temps.' }[err.code] || err.message;
@@ -847,8 +930,19 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
       saveCache();
       renderMarkers(); renderChips(); refresh();
       if (!cached) fitAll();
+      autoLocate();
     } catch { if (cached) toast('Hors ligne : affichage de la dernière copie enregistrée.', 4000); }
     offerLegacyImport();
+  }
+  // Les clients avec une adresse mais sans position sont localisés automatiquement, une fois par ouverture.
+  let autoLocated = false;
+  async function autoLocate() {
+    if (autoLocated) return;
+    autoLocated = true;
+    const todo = clients.filter(c => !hasPos(c) && fullAddress(c));
+    if (!todo.length) return;
+    const r = await geocodeMissing(todo, () => {});
+    if (r.ok) toast(r.ok > 1 ? `${r.ok} adresses localisées automatiquement` : 'Une adresse localisée automatiquement', 2500);
   }
 
   // Temps réel : les ajouts / modifications des collègues apparaissent sans recharger.
@@ -856,14 +950,16 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     channel?.unsubscribe();
     channel = sb.channel('clients-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, ({ eventType, new: row, old }) => {
+        let id;
         if (eventType === 'DELETE' || row?.deleted_at) { // supprimé ou mis à la corbeille
-          const id = eventType === 'DELETE' ? old.id : row.id;
+          id = eventType === 'DELETE' ? old.id : row.id;
           clients = clients.filter(c => c.id !== id); if (selectedId === id) closeDetail();
         } else {
+          id = row.id;
           const i = clients.findIndex(c => c.id === row.id);
           i >= 0 ? (clients[i] = clean(row)) : clients.push(clean(row));
         }
-        scheduleFullRender();
+        scheduleUpdate(id);
       })
       .subscribe();
   }
@@ -1288,17 +1384,18 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   $('#clearSearch').addEventListener('click', () => { search.value = ''; query = ''; $('#clearSearch').hidden = true; renderList(); search.focus(); });
 
   const menu = $('#menu');
-  const toggleMenu = e => { e.stopPropagation(); menu.hidden = !menu.hidden; };
+  const menuPage = page => { $('#menuMain').hidden = page !== 'main'; $('#menuManage').hidden = page !== 'manage'; };
+  const toggleMenu = e => { e.stopPropagation(); menuPage('main'); menu.hidden = !menu.hidden; };
   $('#menuBtn').addEventListener('click', toggleMenu);
   $('#userBtn').addEventListener('click', toggleMenu);
   document.addEventListener('click', e => { if (!menu.hidden && !menu.contains(e.target)) menu.hidden = true; });
   $('#csvInput').addEventListener('change', e => { const f = e.target.files[0]; if (f) openImport(f); e.target.value = ''; menu.hidden = true; });
   menu.addEventListener('click', async e => {
     const action = e.target.closest('button')?.dataset.action; if (!action) return;
+    if (action === 'manage' || action === 'back') { menuPage(action === 'manage' ? 'manage' : 'main'); return; }
     menu.hidden = true;
     if (action === 'add') openForm();
     if (action === 'export') exportCsv();
-    if (action === 'geocode') geocodeMissing();
     if (action === 'members') { membersDlg.showModal(); renderMembers(); }
     if (action === 'crmfields') openFields();
     if (action === 'logout') { await sb.auth.signOut(); }
@@ -1436,7 +1533,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   async function handleSession(session) {
     if (authMode !== 'login') return; // on attend le choix du mot de passe
     if (!session) {
-      sessionUserId = null; user = null; isAdmin = false; mfa.active = false;
+      sessionUserId = null; user = null; isAdmin = false; mfa.active = false; autoLocated = false;
       channel?.unsubscribe(); channel = null; stopWatch();
       clients = []; favorites = new Set(); closeDetail(); renderMarkers(); renderChips(); renderList();
       showAuth('form', landingMsg); landingMsg = null; // message d'un lien expiré : affiché une fois
@@ -1488,5 +1585,12 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
       setTimeout(() => { sessionQueue = sessionQueue.then(() => handleSession(session)).catch(console.error); }, 0); // hors du callback (recommandé par Supabase)
     });
   }
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    // L'appli s'ouvre tout de suite depuis le téléphone ; une nouvelle version se télécharge en arrière-plan.
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadController) toast('Nouvelle version de l’appli disponible', 15000, { label: 'Mettre à jour', run: () => location.reload() });
+    });
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
 })();
