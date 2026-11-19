@@ -576,3 +576,30 @@ dialog[open] { animation: up .25s cubic-bezier(.2,.8,.2,1); }
 @media (prefers-color-scheme: dark) { .rec-recover { background: #3b2a08; } }
 .rec-live .btn.small { padding: 0 12px; }
 @media (max-width: 440px) { .rec-state { display: none; } }
+
+/* ===== Tournée ===== */
+.menu-count { min-width: 22px; height: 22px; border-radius: 11px; background: #7c3aed; color: #fff; font-size: 12px; font-weight: 700; display: grid; place-items: center; padding: 0 6px; }
+.tour-body { overflow-y: auto; flex: 1; padding: 6px 20px 20px; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 12px; }
+.tour-sum { font-size: 16px; }
+.tour-actions, .tour-nav, .tour-foot { display: flex; gap: 10px; }
+.tour-actions .btn, .tour-nav .btn, .tour-foot .btn { flex: 1; }
+.tour-list { list-style: none; margin: 0; padding: 0; }
+.tour-list li { display: flex; align-items: center; gap: 12px; padding: 10px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.tour-list .t { font-weight: 600; } .tour-list .s { font-size: 13px; color: var(--ink-2); }
+.tour-list .grow { flex: 1; min-width: 0; }
+.tour-num { width: 28px; height: 28px; border-radius: 50%; background: #7c3aed; color: #fff; font-weight: 700; font-size: 13px; display: grid; place-items: center; flex: none; }
+.tour-list li.done .tour-num { background: var(--ok); }
+.tour-list li.done .t { color: var(--ink-3); text-decoration: line-through; }
+.tour-list li.cur { background: #f3edff; border-radius: 12px; }
+@media (prefers-color-scheme: dark) { .tour-list li.cur { background: #2a1f45; } }
+.tour-btns { display: flex; gap: 4px; flex: none; }
+.tour-btns button { width: 32px; height: 32px; border-radius: 50%; background: var(--surface-2); color: var(--ink-2); font-size: 16px; font-weight: 700; }
+.tour-btns button:disabled { opacity: .3; }
+.tour-btns [data-remove] { color: var(--danger); }
+.tour-now { border: 2px solid #7c3aed; border-radius: 18px; padding: 14px; display: flex; flex-direction: column; gap: 4px; }
+.tour-now .d-actions { margin: 10px 0 6px; }
+.tour-step { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #7c3aed; }
+.tour-name { font-size: 20px; font-weight: 700; }
+.tour-pin { width: 28px; height: 28px; border-radius: 50%; background: #7c3aed; color: #fff; border: 2.5px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,.35); display: grid; place-items: center; font-weight: 700; font-size: 12.5px; transform: translate(-0px, -24px); }
+.tour-pin.done { background: var(--ok); }
+.tour-pin.cur { background: #ef4444; transform: translate(0, -24px) scale(1.2); }

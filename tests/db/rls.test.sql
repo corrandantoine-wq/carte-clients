@@ -174,6 +174,23 @@ delete from storage.objects where bucket_id = 'enregistrements';
 select pg_temp.check('bob efface l''audio de son compte rendu une fois transféré', (select count(*) from storage.objects) = 0);
 select set_config('test.client', (select id::text from public.clients limit 1), false);
 
+-- Tournées : chacun les siennes, l'admin voit tout en lecture
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b', 'bob@soc.fr');
+insert into public.tournees (nom, etapes, user_email) select 'Tournée du mardi', array_agg(id), 'admin@soc.fr' from public.clients;
+select pg_temp.check('tournée : l''auteur est celui qui l''enregistre', (select user_email = 'bob@soc.fr' from public.tournees));
+select pg_temp.refused('tournée de plus de 25 étapes',
+  $$insert into public.tournees (nom, etapes) select 'trop', array_agg(gen_random_uuid()) from generate_series(1, 26)$$);
+select pg_temp.refused('tournée sans nom', $$insert into public.tournees (nom) values ('')$$);
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a', 'admin@soc.fr');
+select pg_temp.check('l''admin voit la tournée de bob', (select count(*) from public.tournees) = 1);
+update public.tournees set nom = 'renommée par l''admin';
+delete from public.tournees;
+insert into public.tournees (nom) values ('Tournée admin');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b', 'bob@soc.fr');
+select pg_temp.check('l''admin ne modifie ni ne supprime la tournée de bob',
+  (select nom = 'Tournée du mardi' from public.tournees));
+select pg_temp.check('bob ne voit pas la tournée de l''admin', (select count(*) from public.tournees) = 1);
+
 -- Personne non autorisée
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000c', 'intrus@gmail.com');
 select pg_temp.check('l''intrus ne voit aucun client', (select count(*) from public.clients) = 0);
@@ -181,6 +198,8 @@ select pg_temp.check('l''intrus ne voit aucun collaborateur', (select count(*) f
 select pg_temp.check('l''intrus ne voit aucun champ CRM', (select count(*) from public.crm_fields) = 0);
 select pg_temp.check('l''intrus ne voit pas l''historique', (select count(*) from public.client_history) = 0);
 select pg_temp.check('l''intrus ne voit aucun compte rendu', (select count(*) from public.visites) = 0);
+select pg_temp.check('l''intrus ne voit aucune tournée', (select count(*) from public.tournees) = 0);
+select pg_temp.refused('l''intrus enregistre une tournée', $$insert into public.tournees (nom) values ('x')$$);
 select pg_temp.refused('l''intrus écrit un compte rendu', $$insert into public.visites (client_id) values (current_setting('test.client')::uuid)$$);
 select pg_temp.refused('l''intrus ajoute un client', $$insert into public.clients (nom) values ('spam')$$);
 select pg_temp.check('l''intrus ne peut pas déplacer les clients',
@@ -193,6 +212,7 @@ select pg_temp.refused('anonyme : lecture des clients', $$select count(*) from p
 select pg_temp.refused('anonyme : lecture des collaborateurs', $$select count(*) from public.members$$);
 select pg_temp.refused('anonyme : lecture de l''historique', $$select count(*) from public.client_history$$);
 select pg_temp.refused('anonyme : lecture des comptes rendus', $$select count(*) from public.visites$$);
+select pg_temp.refused('anonyme : lecture des tournées', $$select count(*) from public.tournees$$);
 select pg_temp.check('anonyme : aucun enregistrement visible', (select count(*) from storage.objects) = 0);
 select pg_temp.refused('anonyme : ajout d''un client', $$insert into public.clients (nom) values ('x')$$);
 select pg_temp.refused('anonyme : appel de is_member', $$select public.is_member()$$);

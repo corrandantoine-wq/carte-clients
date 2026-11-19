@@ -6,6 +6,7 @@ import { I } from './js/icons.js';
 import { geocode, geocodeBatch, fetchRoute } from './js/geo.js';
 import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/importer.js';
 import { Enregistreur, audioSupporte, brouillons, stock, fmtChrono } from './js/enregistreur.js';
+import { optimiser, troncons, MAX_ETAPES } from './js/tournee.js';
 
 (() => {
 
@@ -467,6 +468,7 @@ import { Enregistreur, audioSupporte, brouillons, stock, fmtChrono } from './js/
 
   function select(id) {
     const c = byId(id); if (!c) return;
+    if (inTour()) { tourReturn = true; tourView.hidden = true; tourLayer.remove(); }
     selectedId = id;
     $('#listView').hidden = true; $('#detailView').hidden = false; $('#detail').scrollTop = 0;
     renderDetail(); updateMarkerStates();
@@ -484,8 +486,8 @@ import { Enregistreur, audioSupporte, brouillons, stock, fmtChrono } from './js/
     $('#detailView').hidden = true; $('#listView').hidden = false;
     updateMarkerStates();
   }
-  $('#backBtn').addEventListener('click', closeDetail);
-  $('#closeBtn').addEventListener('click', () => { closeDetail(); if (!isDesktop()) setSnap('peek'); });
+  $('#backBtn').addEventListener('click', () => { closeDetail(); if (tourReturn) { tourReturn = false; openTour(); } });
+  $('#closeBtn').addEventListener('click', () => { tourReturn = false; closeDetail(); if (!isDesktop()) setSnap('peek'); });
   map.on('click', () => { if (selectedId && !inRoute()) closeDetail(); });
 
   $('#detail').addEventListener('click', async e => {
@@ -523,6 +525,8 @@ import { Enregistreur, audioSupporte, brouillons, stock, fmtChrono } from './js/
     const li = (attrs, icon, t, s = '') => `<li ${attrs}><span class="ai">${icon}</span><div class="grow"><div class="t">${t}</div>${s ? `<div class="s">${s}</div>` : ''}</div></li>`;
     $('#moreTitle').textContent = c.nom;
     $('#moreList').innerHTML = [
+      hasPos(c) ? li('class="click" data-more="tour"', I.route, inTourList(c.id) ? 'Retirer de ma tournée' : 'Ajouter à ma tournée',
+        inTourList(c.id) ? `Étape ${tour.ids.indexOf(c.id) + 1} sur ${tour.ids.length}` : tour.ids.length ? `${tour.ids.length} étape${tour.ids.length > 1 ? 's' : ''} déjà prévue${tour.ids.length > 1 ? 's' : ''}` : 'Préparez votre tournée client par client') : '',
       hasPos(c) ? li('class="click" data-more="route"', I.ab, 'Temps de trajet', 'Depuis ma position ou un autre client') : '',
       li(`class="click" data-more="nav-other" data-href="${esc(navUrl(c, other))}"`, I.car, `Itinéraire avec ${NAV_NAMES[other]}`),
       c.email ? li(`class="click" data-more="mail" data-href="mailto:${esc(c.email)}"`, I.mail, 'Envoyer un e-mail', esc(c.email)) : '',
@@ -540,6 +544,7 @@ import { Enregistreur, audioSupporte, brouillons, stock, fmtChrono } from './js/
       return;
     }
     moreDlg.close();
+    if (act === 'tour' && c) toggleTour(c.id);
     if (act === 'route' && c) openRoute({ id: c.id });
     if (li.dataset.href) window.open(li.dataset.href, act === 'mail' ? '_self' : '_blank', 'noopener');
   });
@@ -950,6 +955,237 @@ import { Enregistreur, audioSupporte, brouillons, stock, fmtChrono } from './js/
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   });
 
+  // ---------- Tournée ----------
+  // La tournée en préparation est gardée sur le téléphone ; elle est enregistrée dans la base
+  // pour être réutilisée (« modèle ») ou une fois terminée (historique).
+  const tourKey = () => `carte-clients:tour:${user?.id}`;
+  let tour = { ids: [], running: false, idx: 0, done: [], debut: null, nom: '', modeleId: null };
+  const tourCalc = { key: '', legs: [], km: 0, min: 0, loading: false, error: '', seq: 0 };
+  const tourLayer = L.layerGroup();
+  const tourView = $('#tourView');
+  const inTour = () => !tourView.hidden;
+  let tourReturn = false; // fiche ouverte depuis la tournée : « retour » y ramène
+  const tourStops = () => tour.ids.map(byId).filter(c => c && hasPos(c));
+  const fmtMin = m => (m >= 60 ? `${Math.floor(m / 60)} h ${String(Math.round(m % 60)).padStart(2, '0')}` : `${Math.max(1, Math.round(m))} min`);
+
+  function loadTour() {
+    tour = Object.assign({ ids: [], running: false, idx: 0, done: [], debut: null, nom: '', modeleId: null }, load(tourKey(), {}));
+    updateTourCount();
+  }
+  function saveTour() { store(tourKey(), tour); updateTourCount(); }
+  function updateTourCount() {
+    const n = tour.ids.length;
+    $('#tourCount').hidden = !n; $('#tourCount').textContent = n;
+  }
+  const inTourList = id => tour.ids.includes(id);
+  function toggleTour(id) {
+    if (inTourList(id)) {
+      const i = tour.ids.indexOf(id);
+      tour.ids.splice(i, 1);
+      if (tour.running && i < tour.idx) tour.idx--;
+      toast('Retiré de votre tournée', 1800);
+    } else {
+      if (tour.ids.length >= MAX_ETAPES) return toast(`Une tournée compte ${MAX_ETAPES} étapes au maximum.`, 3500);
+      if (!hasPos(byId(id))) return toast('Ce client n’est pas localisé : corrigez son adresse d’abord.', 3500);
+      tour.ids.push(id);
+      toast(`Ajouté à votre tournée (étape ${tour.ids.length})`, 2000, { label: 'Voir', run: openTour });
+    }
+    saveTour();
+    if (inTour()) renderTour();
+  }
+
+  function openTour() {
+    if (selectedId) { selectedId = null; updateMarkerStates(); }
+    if (inRoute()) closeRoute();
+    $('#listView').hidden = true; $('#detailView').hidden = true; tourView.hidden = false;
+    if (!isDesktop() && sheetSnap === 'peek') setSnap('half');
+    tourLayer.addTo(map);
+    renderTour();
+    computeTour(true);
+  }
+  function closeTour() {
+    tourView.hidden = true; tourLayer.remove();
+    $('#listView').hidden = false;
+  }
+  $('#tourBack').addEventListener('click', closeTour);
+
+  // Trajet complet : depuis ma position (si connue et pas encore en route), puis chaque étape.
+  async function computeTour(fit = false) {
+    const stops = tourStops();
+    const start = me && !tour.running ? { lat: me.lat, lng: me.lng } : null;
+    const pts = start ? [start, ...stops] : stops;
+    const key = pts.map(p => `${(+p.lat).toFixed(4)},${(+p.lng).toFixed(4)}`).join(';');
+    if (pts.length < 2) { Object.assign(tourCalc, { key, legs: [], km: 0, min: 0, error: '' }); drawTour(null, stops, start, fit); return renderTour(); }
+    if (key === tourCalc.key && !tourCalc.error) { drawTour(tourCalc.geometry, stops, start, fit); return renderTour(); }
+    const seq = ++tourCalc.seq;
+    tourCalc.loading = true; renderTour();
+    let res = null, error = '';
+    try { res = await fetchRoute(pts[0], pts[pts.length - 1], pts.slice(1, -1)); } catch (e) { error = e.message; }
+    if (seq !== tourCalc.seq) return;
+    const legs = troncons(pts, res);
+    Object.assign(tourCalc, { key, loading: false, error, geometry: res?.geometry || null,
+      legs: start ? legs : [null, ...legs], // legs[i] = trajet pour arriver à l'étape i
+      km: legs.reduce((s, l) => s + l.km, 0), min: legs.reduce((s, l) => s + l.min, 0) });
+    drawTour(tourCalc.geometry, stops, start, fit);
+    renderTour();
+  }
+  function drawTour(geometry, stops, start, fit) {
+    tourLayer.clearLayers();
+    const coords = geometry?.coordinates?.map(([lng, lat]) => [lat, lng]) || (stops.length > 1 || start ? [...(start ? [[start.lat, start.lng]] : []), ...stops.map(c => [c.lat, c.lng])] : []);
+    if (coords.length > 1) {
+      L.polyline(coords, { color: '#ffffff', weight: 9, opacity: 0.9, interactive: false }).addTo(tourLayer);
+      L.polyline(coords, { color: '#7c3aed', weight: 5, opacity: 0.95, interactive: false, dashArray: geometry ? null : '6 8' }).addTo(tourLayer);
+    }
+    stops.forEach((c, i) => {
+      const done = tour.running && tour.done.includes(c.id), cur = tour.running && i === tour.idx;
+      L.marker([c.lat, c.lng], { icon: L.divIcon({ className: '', html: `<div class="tour-pin${done ? ' done' : ''}${cur ? ' cur' : ''}">${done ? '✓' : i + 1}</div>`, iconSize: [28, 28] }), zIndexOffset: 3500, interactive: false }).addTo(tourLayer);
+    });
+    if (fit && (coords.length || stops.length)) { setFollow(false); fitVisible(L.latLngBounds(coords.length ? coords : stops.map(c => [c.lat, c.lng])), 14); }
+  }
+
+  function renderTour() {
+    if (!inTour()) return;
+    const body = $('#tourBody'), stops = tour.ids.map(id => byId(id)).filter(Boolean);
+    if (!stops.length) {
+      body.innerHTML = `<div class="empty"><div class="em-icon">${I.route}</div><strong>Votre tournée est vide</strong>
+        Ouvrez la fiche d’un client, touchez <b>Plus</b> puis <b>Ajouter à ma tournée</b>.<div><button class="btn ghost" data-tour="saved">Tournées enregistrées</button></div></div>`;
+      return;
+    }
+    const legTxt = i => { const l = tourCalc.legs[i]; return l ? `${fmtDist(l.km)} · ${fmtMin(l.min)}` : i === 0 ? 'départ' : ''; };
+    const end = tourCalc.min ? new Date(Date.now() + tourCalc.min * 60000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '';
+    const summary = tourCalc.loading ? '<div class="skeleton" style="width:60%;height:22px"></div>'
+      : `<div class="tour-sum"><b>${stops.length} étape${stops.length > 1 ? 's' : ''}</b>${tourCalc.km ? ` · ${fmtDist(tourCalc.km)} · ${fmtMin(tourCalc.min)} de route` : ''}</div>
+         <div class="sub">${tourCalc.error ? `Temps indisponible (${esc(tourCalc.error)}).` : end && !tour.running ? `En partant maintenant : dernière étape vers <b>${end}</b> (hors temps passé chez les clients, hors trafic).` : me ? '' : 'Position GPS inconnue : le trajet part de la 1re étape.'}</div>`;
+
+    if (tour.running) {
+      const cur = stops[tour.idx];
+      const left = stops.filter(c => !tour.done.includes(c.id)).length;
+      body.innerHTML = `${summary}
+        ${cur ? `<div class="tour-now" data-id="${esc(cur.id)}">
+          <div class="tour-step">Étape ${tour.idx + 1} / ${stops.length}${tour.done.includes(cur.id) ? ' · faite ✓' : ''}</div>
+          <div class="tour-name">${esc(cur.nom)}</div><div class="sub">${esc(fullAddress(cur))}</div>
+          <div class="d-actions">
+            <a class="act primary" href="${esc(navUrl(cur))}" target="_blank" rel="noopener">${I.route}Itinéraire</a>
+            ${cur.telephone ? `<a class="act" href="${esc(telUrl(cur))}">${I.phone}Appeler</a>` : ''}
+            <button class="act" data-tour="cr">${I.note}Compte rendu</button>
+          </div>
+          <div class="tour-nav"><button class="btn ghost" data-tour="skip">Passer</button><button class="btn primary" data-tour="next">${left <= 1 && !tour.done.includes(cur.id) ? 'Faite · terminer' : 'Faite · suivante'}</button></div>
+        </div>` : ''}
+        <ol class="tour-list running">${stops.map((c, i) => `<li data-id="${esc(c.id)}" class="${tour.done.includes(c.id) ? 'done' : ''}${i === tour.idx ? ' cur' : ''}">
+          <span class="tour-num">${tour.done.includes(c.id) ? '✓' : i + 1}</span><div class="grow"><div class="t">${esc(c.nom)}</div><div class="s">${esc(c.ville || '')}</div></div></li>`).join('')}</ol>
+        <div class="tour-foot"><button class="btn danger" data-tour="finish">Terminer la tournée</button></div>`;
+      return;
+    }
+    body.innerHTML = `${summary}
+      <div class="tour-actions"><button class="btn ghost" data-tour="optim">${I.route}Optimiser</button><button class="btn primary" data-tour="start">Démarrer</button></div>
+      <ol class="tour-list">${stops.map((c, i) => `<li data-id="${esc(c.id)}">
+        <span class="tour-num">${i + 1}</span>
+        <div class="grow"><div class="t">${esc(c.nom)}</div><div class="s">${esc(c.ville || '')}${legTxt(i) ? ` · ${legTxt(i)}` : ''}${hasPos(c) ? '' : ' · non localisé'}</div></div>
+        <div class="tour-btns"><button data-move="-1" aria-label="Monter" ${i ? '' : 'disabled'}>↑</button><button data-move="1" aria-label="Descendre" ${i < stops.length - 1 ? '' : 'disabled'}>↓</button><button data-remove aria-label="Retirer">×</button></div>
+      </li>`).join('')}</ol>
+      <div class="tour-foot"><button class="btn ghost" data-tour="clear">Vider</button><button class="btn ghost" data-tour="save">${tour.modeleId ? 'Mettre à jour' : 'Enregistrer'} la tournée</button></div>`;
+  }
+
+  $('#tourBody').addEventListener('click', async e => {
+    const act = e.target.closest('[data-tour]')?.dataset.tour;
+    const li = e.target.closest('li[data-id]'), id = li?.dataset.id;
+    if (e.target.closest('[data-move]') && id) {
+      const i = tour.ids.indexOf(id), j = i + +e.target.closest('[data-move]').dataset.move;
+      [tour.ids[i], tour.ids[j]] = [tour.ids[j], tour.ids[i]]; saveTour(); renderTour(); return computeTour();
+    }
+    if (e.target.closest('[data-remove]') && id) { toggleTour(id); return computeTour(); }
+    if (act === 'saved') return openTours();
+    if (act === 'optim') {
+      const stops = tourStops(), others = tour.ids.filter(x => !stops.some(c => c.id === x));
+      const before = tour.ids.join();
+      tour.ids = [...optimiser(stops, me ? { lat: me.lat, lng: me.lng } : null).map(c => c.id), ...others];
+      saveTour(); renderTour(); await computeTour(true);
+      return toast(before === tour.ids.join() ? 'L’ordre était déjà le meilleur.' : `Ordre optimisé : ${fmtDist(tourCalc.km)} de route.`, 2500);
+    }
+    if (act === 'start') {
+      Object.assign(tour, { running: true, idx: 0, done: [], debut: new Date().toISOString() });
+      saveTour(); renderTour(); return computeTour(true);
+    }
+    if (act === 'cr') { const c = byId(tour.ids[tour.idx]); if (c) openCr(c); return; }
+    if (act === 'next' || act === 'skip') {
+      const cur = tour.ids[tour.idx];
+      if (act === 'next' && cur && !tour.done.includes(cur)) tour.done.push(cur);
+      const next = tour.ids.findIndex((x, i) => i > tour.idx && !tour.done.includes(x));
+      const first = tour.ids.findIndex(x => !tour.done.includes(x));
+      if (next >= 0) tour.idx = next; else if (first >= 0 && act === 'skip') tour.idx = first;
+      else { saveTour(); return finishTour(); }
+      saveTour(); renderTour(); drawTour(tourCalc.geometry, tourStops(), null, false);
+      const c = byId(tour.ids[tour.idx]); if (c) showPoint([c.lat, c.lng], Math.max(map.getZoom(), 13));
+      return;
+    }
+    if (act === 'finish') return finishTour();
+    if (act === 'clear') {
+      if (!confirm('Vider la tournée ?')) return;
+      Object.assign(tour, { ids: [], running: false, idx: 0, done: [], debut: null, nom: '', modeleId: null }); saveTour(); return computeTour();
+    }
+    if (act === 'save') return saveModele();
+    if (li && !e.target.closest('button')) { tourReturn = true; tourView.hidden = true; tourLayer.remove(); select(id); }
+  });
+
+  async function saveModele() {
+    const def = tour.nom || `Tournée du ${new Date().toLocaleDateString('fr-FR', { weekday: 'long' })}`;
+    const nom = (prompt('Nom de la tournée :', def) || '').trim().slice(0, 80);
+    if (!nom) return;
+    const row = { nom, genre: 'modele', etapes: tour.ids, distance_km: tourCalc.km ? +tourCalc.km.toFixed(1) : null, duree_min: tourCalc.min ? Math.round(tourCalc.min) : null };
+    try {
+      const saved = tour.modeleId && nom === tour.nom
+        ? await q(sb.from('tournees').update(row).eq('id', tour.modeleId).select('id').single(), 'Tournée non enregistrée')
+        : await q(sb.from('tournees').insert(row).select('id').single(), 'Tournée non enregistrée');
+      Object.assign(tour, { nom, modeleId: saved.id }); saveTour(); renderTour();
+      toast(`« ${nom} » enregistrée : retrouvez-la dans les tournées enregistrées.`, 3000);
+    } catch {}
+  }
+  async function finishTour() {
+    const done = tour.done.length, total = tour.ids.length;
+    if (!confirm(`Terminer la tournée ? ${done}/${total} étape${total > 1 ? 's' : ''} faite${done > 1 ? 's' : ''}.`)) return;
+    try {
+      await q(sb.from('tournees').insert({ nom: tour.nom || `Tournée du ${new Date(tour.debut || Date.now()).toLocaleDateString('fr-FR')}`, genre: 'faite',
+        etapes: tour.ids, faites: tour.done, distance_km: tourCalc.km ? +tourCalc.km.toFixed(1) : null, duree_min: tourCalc.min ? Math.round(tourCalc.min) : null,
+        debut: tour.debut, fin: new Date().toISOString() }), 'Historique de la tournée');
+    } catch { /* message affiché ; la tournée est quand même clôturée */ }
+    Object.assign(tour, { ids: [], running: false, idx: 0, done: [], debut: null, nom: '', modeleId: null });
+    saveTour(); computeTour();
+    toast(`Tournée terminée : ${done}/${total} étape${total > 1 ? 's' : ''} faite${done > 1 ? 's' : ''}. Bravo !`, 3500);
+  }
+
+  // Tournées enregistrées (réutilisables) et historique.
+  const toursDlg = $('#toursDialog');
+  let toursRows = [];
+  async function openTours() {
+    toursDlg.showModal();
+    $('#toursSaved').innerHTML = $('#toursDone').innerHTML = '<li class="muted">Chargement…</li>';
+    try {
+      toursRows = await q(sb.from('tournees').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }).limit(60), 'Chargement des tournées');
+    } catch { toursRows = []; $('#toursSaved').innerHTML = $('#toursDone').innerHTML = '<li class="muted">Tournées indisponibles pour le moment.</li>'; return; }
+    const m = toursRows.filter(t => t.genre === 'modele'), f = toursRows.filter(t => t.genre === 'faite').slice(0, 10);
+    $('#toursSaved').innerHTML = m.map(t => `<li class="click" data-t="${esc(t.id)}"><div class="grow"><div class="t">${esc(t.nom)}</div>
+        <div class="s">${t.etapes.length} étape${t.etapes.length > 1 ? 's' : ''}${t.distance_km ? ` · ${fmtDist(+t.distance_km)}` : ''}</div></div>
+        <button class="icon-del" data-del aria-label="Supprimer">${I.trash}</button></li>`).join('') || '<li class="muted">Aucune : préparez une tournée puis « Enregistrer la tournée ».</li>';
+    $('#toursDone').innerHTML = f.map(t => `<li data-t="${esc(t.id)}" class="click"><div class="grow"><div class="t">${esc(t.nom)}</div>
+        <div class="s">${t.fin ? fmtDay(t.fin) : ''} · ${t.faites.length}/${t.etapes.length} étapes faites${t.distance_km ? ` · ${fmtDist(+t.distance_km)} prévus` : ''}</div></div></li>`).join('') || '<li class="muted">Aucune tournée terminée.</li>';
+  }
+  $('#toursBtn').addEventListener('click', openTours);
+  toursDlg.addEventListener('click', async e => {
+    const li = e.target.closest('[data-t]'); if (!li) return;
+    const t = toursRows.find(x => x.id === li.dataset.t); if (!t) return;
+    if (e.target.closest('[data-del]')) {
+      if (!confirm(`Supprimer « ${t.nom} » ?`)) return;
+      try { await q(sb.from('tournees').delete().eq('id', t.id), 'Suppression impossible'); if (tour.modeleId === t.id) { tour.modeleId = null; saveTour(); } li.remove(); } catch {}
+      return;
+    }
+    if (tour.ids.length && !confirm('Remplacer la tournée en cours par celle-ci ?')) return;
+    const ids = t.etapes.filter(id => byId(id));
+    Object.assign(tour, { ids, running: false, idx: 0, done: [], debut: null, nom: t.genre === 'modele' ? t.nom : '', modeleId: t.genre === 'modele' ? t.id : null });
+    saveTour(); toursDlg.close();
+    if (ids.length < t.etapes.length) toast(`${t.etapes.length - ids.length} client(s) de cette tournée n’existent plus.`, 3500);
+    openTour();
+  });
+
   // ---------- Corbeille ----------
   async function trashClient(c) {
     await q(sb.from('clients').update({ deleted_at: new Date().toISOString() }).eq('id', c.id).select('id'), 'Suppression impossible');
@@ -1032,6 +1268,7 @@ import { Enregistreur, audioSupporte, brouillons, stock, fmtChrono } from './js/
   function openRoute(from = null) {
     route.returnTo = selectedId;
     if (selectedId) { selectedId = null; updateMarkerStates(); }
+    if (inTour()) { tourView.hidden = true; tourLayer.remove(); }
     $('#listView').hidden = true; $('#detailView').hidden = true; routeView.hidden = false;
     if (from) route.A = from;
     if (!isDesktop() && sheetSnap === 'peek') setSnap('half');
@@ -1732,6 +1969,7 @@ import { Enregistreur, audioSupporte, brouillons, stock, fmtChrono } from './js/
     menu.hidden = true;
     if (action === 'add') openForm();
     if (action === 'reports') openReports();
+    if (action === 'tour') openTour();
     if (action === 'export') exportCsv();
     if (action === 'members') { membersDlg.showModal(); renderMembers(); }
     if (action === 'crmfields') openFields();
@@ -1872,7 +2110,9 @@ import { Enregistreur, audioSupporte, brouillons, stock, fmtChrono } from './js/
     if (!session) {
       sessionUserId = null; user = null; isAdmin = false; mfa.active = false; autoLocated = false;
       channel?.unsubscribe(); channel = null; stopWatch();
-      clients = []; favorites = new Set(); lastVisit = new Map(); visitsCache.clear(); closeDetail(); renderMarkers(); renderChips(); renderList();
+      clients = []; favorites = new Set(); lastVisit = new Map(); visitsCache.clear(); closeDetail();
+      if (inTour()) closeTour();
+      tour = { ids: [], running: false, idx: 0, done: [], debut: null, nom: '', modeleId: null }; updateTourCount(); renderMarkers(); renderChips(); renderList();
       showAuth('form', landingMsg); landingMsg = null; // message d'un lien expiré : affiché une fois
       return;
     }
@@ -1893,6 +2133,7 @@ import { Enregistreur, audioSupporte, brouillons, stock, fmtChrono } from './js/
     $('#menuRole').textContent = isAdmin ? 'Administrateur' : 'Collaborateur';
     document.querySelector('.admin-only').hidden = !isAdmin;
     await loadMemberEmails();
+    loadTour();
     auth.hidden = true;
     await loadData();
     subscribe();

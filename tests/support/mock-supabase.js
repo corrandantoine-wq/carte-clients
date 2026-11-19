@@ -8,7 +8,7 @@
             { id: 'u-bob', email: 'bob@soc.fr', password: 'motdepasse1', confirmed: true },
             { id: 'u-intrus', email: 'intrus@gmail.com', password: 'motdepasse1', confirmed: true }],
     members: [{ email: 'admin@soc.fr', role: 'admin' }, { email: 'bob@soc.fr', role: 'user' }],
-    clients: [], favorites: [], client_history: [], invites: [], visites: [], storage: {}, hubspot: { meetings: {}, files: {}, calls: [] },
+    clients: [], favorites: [], client_history: [], invites: [], visites: [], tournees: [], storage: {}, hubspot: { meetings: {}, files: {}, calls: [] },
     crm_fields: [{ property: 'name', label: 'Nom dans le CRM', position: 1 }, { property: 'lifecyclestage', label: 'Étape du cycle de vie', position: 2 }, { property: 'notes_last_contacted', label: 'Dernier contact', position: 3 }],
   };
   for (const [k, v] of Object.entries(window.__SEED__ || {})) db[k] = Array.isArray(db[k]) ? [...db[k], ...v] : v;
@@ -56,7 +56,7 @@
     maybeSingle() { this.one = 'maybe'; return this; }
     rows() {
       let rows = db[this.t];
-      if (this.t === 'favorites') rows = rows.filter(r => r.user_id === uid());
+      if (this.t === 'favorites' || this.t === 'tournees') rows = rows.filter(r => r.user_id === uid());
       if (this.t === 'dernieres_visites') { // vue : dernière visite de chaque client
         const m = new Map(); for (const v of db.visites) if (!m.has(v.client_id) || m.get(v.client_id) < v.at) m.set(v.client_id, v.at);
         rows = [...m].map(([client_id, at]) => ({ client_id, at }));
@@ -75,6 +75,8 @@
           const row = { ...r };
           if (this.t === 'clients') Object.assign(row, { id: crypto.randomUUID(), created_by: uid(), hubspot_id: r.hubspot_id ?? null, deleted_at: r.deleted_at ?? null, assigned_to: r.assigned_to ?? null });
           if (this.t === 'favorites') row.user_id = uid();
+          if (this.t === 'tournees') Object.assign(row, { id: crypto.randomUUID(), user_id: uid(), user_email: session.user.email, genre: r.genre || 'modele',
+            etapes: r.etapes || [], faites: r.faites || [], created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
           if (this.t === 'visites') Object.assign(row, { id: crypto.randomUUID(), at: new Date().toISOString(), user_id: uid(), user_email: session.user.email,
             type: r.type || 'visite', notes: r.notes || '', hubspot_statut: r.hubspot_statut || 'aucun', audio_path: null, hubspot_file_id: null, hubspot_erreur: null });
           if (this.op === 'upsert') { const k = this.key; const ex = row[k] != null && db[this.t].find(x => x[k] === row[k]); if (ex) { const before = { ...ex }; Object.assign(ex, r); if (this.t === 'clients') logUpdate(before, ex); return { ...ex }; } }

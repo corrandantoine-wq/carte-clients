@@ -53,10 +53,12 @@ export async function geocodeBatch(list, onProgress = () => {}, mainLineOnly = f
   return found;
 }
 
-// Itinéraire le plus rapide en voiture (temps hors trafic). a, b : { lat, lng }.
+// Itinéraire le plus rapide en voiture (temps hors trafic). a, b : { lat, lng } ; via : étapes intermédiaires.
+// Avec des étapes, la réponse contient « portions » : distance et durée de chaque tronçon.
 export const ROUTE_API = 'https://data.geopf.fr/navigation/itineraire';
-export async function fetchRoute(a, b) {
-  const url = `${ROUTE_API}?resource=bdtopo-osrm&profile=car&optimization=fastest&start=${a.lng},${a.lat}&end=${b.lng},${b.lat}` +
+export async function fetchRoute(a, b, via = []) {
+  const inter = via.length ? `&intermediates=${via.map(p => `${p.lng},${p.lat}`).join('|')}` : '';
+  const url = `${ROUTE_API}?resource=bdtopo-osrm&profile=car&optimization=fastest&start=${a.lng},${a.lat}&end=${b.lng},${b.lat}${inter}` +
     '&geometryFormat=geojson&getSteps=false&timeUnit=minute&distanceUnit=kilometer';
   const r = await fetch(url);
   if (!r.ok) throw new Error(`service indisponible (${r.status})`);

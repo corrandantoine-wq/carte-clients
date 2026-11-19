@@ -16,6 +16,7 @@ Web app (installable sur mobile) qui affiche la **base clients commune de l'équ
 - **Comptes rendus de visite** : bouton « Compte rendu » sur chaque fiche (visite ou appel, résultat, notes, date de relance). Le compte rendu est rattaché au **rendez-vous planifié dans HubSpot** (le plus proche de maintenant est proposé ; sinon un rendez-vous est créé) et écrit dans ses notes. Historique des visites sur la fiche, « vu il y a … » dans la liste, menu ☰ → **Mes comptes rendus** (semaine, clients à revoir depuis 30 jours, export CSV pour les admins).
 - **Enregistrement du rendez-vous** : bouton 🎙 dans le compte rendu, **uniquement après avoir coché « Le client a accepté d'être enregistré »** (l'heure de cet accord est conservée). Le son est joint au rendez-vous HubSpot (fichier privé, écoutable par toute l'équipe depuis l'appli ou HubSpot, **supprimé automatiquement après 6 mois**). Pendant l'enregistrement, l'écran reste allumé et le son est sauvegardé sur le téléphone toutes les 5 s : un enregistrement interrompu est proposé à la réouverture. Sans réseau, l'envoi part tout seul au retour du réseau.
   - ⚠️ Le téléphone doit rester **déverrouillé, l'appli à l'écran** : sinon le téléphone coupe le micro (limite des applis web, surtout sur iPhone). Compter ~14 Mo par heure.
+- **Tournées** : fiche client → **Plus** → **Ajouter à ma tournée** (25 étapes maximum). Menu ☰ → **Ma tournée** : trajet complet sur la carte, km et temps de chaque tronçon (IGN, hors trafic), heure d'arrivée à la dernière étape, bouton **Optimiser** (ordre le plus court depuis votre position), ordre modifiable à la main. **Démarrer** passe en mode tournée : étape en cours avec Itinéraire, Appeler, Compte rendu, puis « Faite · suivante » ou « Passer ». Les tournées peuvent être **enregistrées** pour être réutilisées (« Tournée du mardi ») ; les tournées terminées sont gardées dans l'historique. Chacun ne voit que ses tournées (l'admin voit celles de l'équipe).
 - **Historique** : chaque création, modification, suppression et restauration est enregistrée (qui, quand, ancienne et nouvelle valeur), consultable sur la fiche.
 - **Administration** (menu ☰ → **Gérer la base clients**) : gérer les collaborateurs, choisir les champs HubSpot affichés, exporter la base, vider la base. Le menu principal ne garde que l'usage quotidien.
 
@@ -28,6 +29,7 @@ Web app (installable sur mobile) qui affiche la **base clients commune de l'équ
 | `js/geo.js` | Services IGN : géocodage des adresses (unitaire et par lot), itinéraires |
 | `js/importer.js` | Import ERP : lecture CSV ou Excel, reconnaissance des colonnes, préparation |
 | `js/icons.js` | Icônes |
+| `js/tournee.js` | Tournées : ordre de visite optimisé, durée de chaque tronçon |
 | `js/enregistreur.js` | Enregistrement audio des rendez-vous, sauvegarde sur le téléphone et file d'envoi |
 | `config.js` | Adresse du projet Supabase et clé publique « anon » |
 | `supabase/migrations/` | Tables, règles de sécurité, temps réel, import ERP |
@@ -63,7 +65,7 @@ Règles d'accès (**Row Level Security**, activée sur toutes les tables) :
 
 ### 2. Créer les tables
 1. Dans Supabase, ouvrez **SQL Editor → New query**.
-2. Collez le contenu de `supabase/migrations/001_init.sql` et cliquez sur **Run**. Recommencez avec `002_import_erp.sql`, puis `003_historique_corbeille.sql`, `004_secteurs.sql`, `005_verrou_anon.sql`, `006_double_verification_admin.sql`, `007_etat_compte.sql` et `008_comptes_rendus.sql`.
+2. Collez le contenu de `supabase/migrations/001_init.sql` et cliquez sur **Run**. Recommencez avec `002_import_erp.sql`, puis `003_historique_corbeille.sql`, `004_secteurs.sql`, `005_verrou_anon.sql`, `006_double_verification_admin.sql`, `007_etat_compte.sql`, `008_comptes_rendus.sql` et `009_tournees.sql`.
 3. Déclarez-vous administrateur. Dans une nouvelle requête, avec **votre** adresse :
    ```sql
    insert into public.members (email, role) values ('prenom.nom@societe.fr', 'admin');

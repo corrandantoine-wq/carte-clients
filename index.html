@@ -42,6 +42,7 @@
     <!-- Page principale : seulement l'usage quotidien -->
     <div id="menuMain">
       <button data-action="add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Ajouter un client</button>
+      <button data-action="tour"><svg viewBox="0 0 24 24"><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M6 17V9a4 4 0 0 1 4-4h6M18 7v8a4 4 0 0 1-4 4H8"/></svg><span class="grow">Ma tournée</span><span id="tourCount" class="menu-count" hidden></span></button>
       <button data-action="reports"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM9 9h6M9 13h6M9 17h3"/></svg>Mes comptes rendus</button>
       <button data-action="manage"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="7" cy="18" r="1.6"/></svg><span class="grow">Gérer la base clients</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
       <div class="menu-sep"></div>
@@ -115,6 +116,17 @@
         <ul id="rSuggest" class="pick-list route-suggest"></ul>
         <div id="rResult"></div>
       </div>
+    </div>
+
+    <!-- Vue tournée -->
+    <div id="tourView" class="view" hidden>
+      <div class="detail-top">
+        <button id="tourBack" class="round-btn" aria-label="Retour"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+        <h2 class="route-title">Ma tournée</h2>
+        <span class="spacer"></span>
+        <button id="toursBtn" class="round-btn" aria-label="Tournées enregistrées" title="Tournées enregistrées"><svg viewBox="0 0 24 24"><path d="M5 4h14v16l-7-4-7 4z"/></svg></button>
+      </div>
+      <div id="tourBody" class="tour-body"></div>
     </div>
 
     <!-- Vue fiche client -->
@@ -282,6 +294,19 @@
         <button type="submit" class="btn primary" id="crSave">Enregistrer</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- Tournées enregistrées et historique -->
+  <dialog id="toursDialog" class="panel-dlg">
+    <div class="dlg-body">
+      <div class="dlg-grab"></div>
+      <h2>Tournées</h2>
+      <div class="imp-section">Enregistrées</div>
+      <ul id="toursSaved" class="pick-list"></ul>
+      <div class="imp-section">Faites récemment</div>
+      <ul id="toursDone" class="pick-list"></ul>
+      <div class="dialog-actions"><button class="btn ghost" data-close>Fermer</button></div>
+    </div>
   </dialog>
 
   <!-- Mes comptes rendus -->
