@@ -136,12 +136,52 @@ reset role;
 select pg_temp.check('état des comptes : actif / en attente / aucun', public.compte_etat('BOB@soc.fr') in ('actif', 'en_attente') and public.compte_etat('personne@x.fr') = 'aucun');
 set role authenticated;
 
+-- Comptes rendus de visite
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b', 'bob@soc.fr');
+insert into public.visites (client_id, resultat, notes, user_id, user_email)
+  select id, 'commande', 'RDV avec le gérant', '00000000-0000-0000-0000-00000000000a', 'admin@soc.fr' from public.clients where code_client = 'B1';
+select pg_temp.check('compte rendu : l''auteur est toujours celui qui écrit',
+  (select user_email = 'bob@soc.fr' and user_id = '00000000-0000-0000-0000-00000000000b' from public.visites));
+select pg_temp.refused('compte rendu : résultat inconnu', $$insert into public.visites (client_id, resultat) select id, 'n''importe quoi' from public.clients limit 1$$);
+select pg_temp.refused('enregistrement sans accord du client',
+  $$insert into public.visites (client_id, audio_path) select id, 'x.webm' from public.clients limit 1$$);
+select pg_temp.check('dernière visite visible', (select count(*) from public.dernieres_visites) = 1);
+-- Dépôt de l'audio : seulement pour son propre compte rendu, avec l'accord du client
+select pg_temp.refused('dépôt d''audio sans accord du client',
+  format($$insert into storage.objects (bucket_id, name) values ('enregistrements', '%s.webm')$$, (select id from public.visites)));
+update public.visites set audio_consentement = now();
+insert into storage.objects (bucket_id, name) select 'enregistrements', id || '.webm' from public.visites;
+select pg_temp.check('dépôt de l''audio de son compte rendu', (select count(*) from storage.objects) = 1);
+select pg_temp.refused('dépôt d''un fichier au nom quelconque', $$insert into storage.objects (bucket_id, name) values ('enregistrements', 'autre.webm')$$);
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a', 'admin@soc.fr');
+select pg_temp.check('l''équipe lit les comptes rendus', (select count(*) from public.visites) = 1);
+select pg_temp.check('l''équipe voit l''enregistrement en attente', (select count(*) from storage.objects) = 1);
+select pg_temp.refused('dépôt d''audio sur le compte rendu d''un autre',
+  format($$insert into storage.objects (bucket_id, name) values ('enregistrements', '%s.mp4')$$, (select id from public.visites)));
+update public.visites set audio_consentement = null, user_email = 'pirate@x.fr', notes = 'complété par l''admin';
+select pg_temp.check('l''admin complète, sans effacer l''accord ni changer l''auteur',
+  (select audio_consentement is not null and user_email = 'bob@soc.fr' and notes = 'complété par l''admin' from public.visites));
+insert into public.clients (nom, code_client) values ('Client pour visite', 'V1');
+insert into public.visites (client_id, notes) select id, 'visite de l''admin' from public.clients where code_client = 'V1';
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b', 'bob@soc.fr');
+update public.visites set notes = 'modifié par bob' where user_email = 'admin@soc.fr';
+delete from public.visites where user_email = 'admin@soc.fr';
+select pg_temp.check('bob ne modifie ni ne supprime le compte rendu de l''admin',
+  (select notes = 'visite de l''admin' from public.visites where user_email = 'admin@soc.fr'));
+delete from storage.objects where bucket_id = 'enregistrements';
+select pg_temp.check('bob efface l''audio de son compte rendu une fois transféré', (select count(*) from storage.objects) = 0);
+select set_config('test.client', (select id::text from public.clients limit 1), false);
+
 -- Personne non autorisée
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000c', 'intrus@gmail.com');
 select pg_temp.check('l''intrus ne voit aucun client', (select count(*) from public.clients) = 0);
 select pg_temp.check('l''intrus ne voit aucun collaborateur', (select count(*) from public.members) = 0);
 select pg_temp.check('l''intrus ne voit aucun champ CRM', (select count(*) from public.crm_fields) = 0);
 select pg_temp.check('l''intrus ne voit pas l''historique', (select count(*) from public.client_history) = 0);
+select pg_temp.check('l''intrus ne voit aucun compte rendu', (select count(*) from public.visites) = 0);
+select pg_temp.refused('l''intrus écrit un compte rendu', $$insert into public.visites (client_id) values (current_setting('test.client')::uuid)$$);
 select pg_temp.refused('l''intrus ajoute un client', $$insert into public.clients (nom) values ('spam')$$);
 select pg_temp.check('l''intrus ne peut pas déplacer les clients',
   public.set_coords((select jsonb_agg(jsonb_build_object('id', id, 'lat', 0, 'lng', 0)) from (select id from public.clients) s)) = 0);
@@ -152,6 +192,8 @@ set role anon;
 select pg_temp.refused('anonyme : lecture des clients', $$select count(*) from public.clients$$);
 select pg_temp.refused('anonyme : lecture des collaborateurs', $$select count(*) from public.members$$);
 select pg_temp.refused('anonyme : lecture de l''historique', $$select count(*) from public.client_history$$);
+select pg_temp.refused('anonyme : lecture des comptes rendus', $$select count(*) from public.visites$$);
+select pg_temp.check('anonyme : aucun enregistrement visible', (select count(*) from storage.objects) = 0);
 select pg_temp.refused('anonyme : ajout d''un client', $$insert into public.clients (nom) values ('x')$$);
 select pg_temp.refused('anonyme : appel de is_member', $$select public.is_member()$$);
 select pg_temp.refused('anonyme : set_coords', $$select public.set_coords('[]'::jsonb)$$);

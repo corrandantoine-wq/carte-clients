@@ -5,6 +5,7 @@ import { esc, num, hasPos, fullAddress, sleep, haversine, fmtDist, fmtEta, fmtDu
 import { I } from './js/icons.js';
 import { geocode, geocodeBatch, fetchRoute } from './js/geo.js';
 import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/importer.js';
+import { Enregistreur, audioSupporte, brouillons, stock, fmtChrono } from './js/enregistreur.js';
 
 (() => {
 
@@ -30,7 +31,8 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   let query = '';
   let selectedId = null;
   let channel = null;
-  let memberEmails = [];    // pour l'administrateur : liste des collaborateurs (attribution des secteurs)
+  let memberEmails = [];
+  let lastVisit = new Map(); // client_id -> date de la dernière visite ou du dernier appel    // pour l'administrateur : liste des collaborateurs (attribution des secteurs)
 
   // ---------- Utilitaires ----------
   function load(key, fallback) {
@@ -304,6 +306,11 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
   }
   const emptyState = (icon, title, text, btn = '') => `<li class="empty"><div class="em-icon">${icon}</div><strong>${title}</strong>${text}${btn}</li>`;
 
+  // « vu il y a 12 j » : dernière visite ou dernier appel enregistré.
+  const daysAgo = iso => Math.floor((Date.now() - Date.parse(iso)) / 86400_000);
+  const seenLabel = iso => { const n = daysAgo(iso); return n <= 0 ? 'vu aujourd’hui' : n === 1 ? 'vu hier' : `vu il y a ${n} j`; };
+  const seenHtml = c => lastVisit.has(c.id) ? `<span class="seen${daysAgo(lastVisit.get(c.id)) > 30 ? ' old' : ''}">${seenLabel(lastVisit.get(c.id))}</span>` : '';
+
   function renderList() {
     const rows = [];
     let nearCount = 0;
@@ -348,7 +355,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
           <div class="addr">${esc(fullAddress(c) || c.telephone || '')}</div>
         </div>
         <div class="meta">
-          <span class="dist${near ? ' near' : ''}">${fmtDist(d)}</span>
+          <span class="dist${near ? ' near' : ''}">${fmtDist(d)}</span>${seenHtml(c)}
           <div class="quick">
             ${c.telephone ? `<a href="${esc(telUrl(c))}" aria-label="Appeler">${I.phone}</a>` : ''}
             <a href="${esc(navUrl(c))}" target="_blank" rel="noopener" aria-label="Itinéraire avec ${NAV_NAMES[settings.nav]}">${I.route}</a>
@@ -430,6 +437,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
       <div class="d-actions">
         <a class="act primary" href="${esc(navUrl(c))}" target="_blank" rel="noopener" data-nav>${I.route}Itinéraire</a>
         <a class="act${c.telephone ? '' : ' disabled'}" href="${c.telephone ? esc(telUrl(c)) : '#'}">${I.phone}Appeler</a>
+        <button class="act" data-act="cr">${I.note}Compte rendu</button>
         <button class="act more" data-act="more" aria-label="Autres actions">${I.more}Plus</button>
       </div>
       <div class="d-rows">
@@ -445,6 +453,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
           : c.assigned_to === myEmail() ? '<button class="btn ghost small" data-act="release">Ne plus m’en occuper</button>' : ''}
         </div>
       </div>
+      <div class="visits"><div class="visits-head">${I.note}Visites et comptes rendus</div><div id="visitsBody">${visitsCache.has(c.id) ? visitsHtml(c.id) : '<div class="skeleton"></div>'}</div></div>
       <div id="crm" class="crm">${crmHtml(c)}</div>
       <details class="hist" id="hist"><summary>${I.note}Historique des modifications</summary><div class="hist-body" id="histBody"></div></details>
       <div class="d-foot">
@@ -453,6 +462,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
       </div>`;
     if (keepHist != null) { $('#hist').open = true; $('#histBody').innerHTML = keepHist; }
     if (c.hubspot_id) loadCrm(c);
+    loadVisits(c.id);
   }
 
   function select(id) {
@@ -487,6 +497,9 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     }
     if (act === 'route') openRoute({ id: c.id });
     if (act === 'more') openMore(c);
+    if (act === 'cr') openCr(c);
+    if (act === 'v-listen') listen(e.target.closest('[data-v]').dataset.v, e.target.closest('[data-act]'));
+    if (act === 'v-retry') { const id = e.target.closest('[data-v]').dataset.v; await sendToHubspot(id); }
     if (act === 'take' || act === 'release') {
       try { await updateClient(c.id, { assigned_to: act === 'take' ? myEmail() : null }); renderDetail(); renderList(); toast(act === 'take' ? 'Client ajouté à votre secteur' : 'Client retiré de votre secteur', 2000); } catch {}
     }
@@ -613,6 +626,328 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     await updateClient(hsTarget, { hubspot_id: li.dataset.hs });
     hsDlg.close(); toast('Client relié à HubSpot');
     if (selectedId === hsTarget) renderDetail();
+  });
+
+  // ---------- Comptes rendus de visite ----------
+  // Un compte rendu par visite ou appel ; il peut être rattaché au rendez-vous planifié dans HubSpot
+  // et accompagné de l'enregistrement audio du rendez-vous (avec l'accord du client).
+  const RESULTATS = { commande: 'Commande passée', devis: 'Devis à envoyer', relance: 'À relancer', absent: 'Client absent / annulé' };
+  const HS_STATUT = { en_attente: ['wait', 'Envoi vers HubSpot en attente'], envoye: ['ok', 'Dans HubSpot'], erreur: ['err', 'Envoi HubSpot échoué'] };
+  const AUDIO_JOURS = 183; // les enregistrements sont supprimés de HubSpot après 6 mois
+  const visitsCache = new Map(); // client_id -> derniers comptes rendus
+  const fmtDay = iso => new Date(iso).toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const fmtDate = d => new Date(d + 'T12:00:00').toLocaleDateString('fr-FR');
+
+  async function loadLastVisits() {
+    try {
+      const { data, error } = await sb.from('dernieres_visites').select('client_id,at');
+      if (error) throw error;
+      lastVisit = new Map(data.map(r => [r.client_id, r.at]));
+    } catch { lastVisit = new Map(); } // base pas encore mise à jour : pas de badge « vu il y a »
+  }
+
+  function visitsHtml(clientId) {
+    const rows = visitsCache.get(clientId) || [];
+    if (!rows.length) return '<div class="crm-empty">Aucun compte rendu pour ce client. Touchez « Compte rendu » après votre visite.</div>';
+    return rows.map(v => {
+      const st = HS_STATUT[v.hubspot_statut];
+      const audio = !v.audio_consentement ? ''
+        : v.hubspot_file_id && daysAgo(v.at) > AUDIO_JOURS ? '<span class="muted">🎙 Enregistrement supprimé (plus de 6 mois)</span>'
+        : v.hubspot_file_id ? `<button class="link-btn" data-act="v-listen">🎧 Écouter (${fmtChrono(v.audio_duree || 0)})</button>`
+        : `<span class="muted">🎙 Enregistrement de ${fmtChrono(v.audio_duree || 0)} pas encore dans HubSpot</span>`;
+      return `<div class="visit" data-v="${esc(v.id)}">
+        <div class="visit-top"><span class="visit-type">${v.type === 'appel' ? 'Appel' : 'Visite'}</span>${v.resultat ? `<span class="res res-${esc(v.resultat)}">${RESULTATS[v.resultat] || esc(v.resultat)}</span>` : ''}</div>
+        <div class="visit-meta">${fmtDay(v.at)} · ${v.user_email === myEmail() ? 'vous' : esc(v.user_email)}${v.relance_le ? ` · relance le ${fmtDate(v.relance_le)}` : ''}</div>
+        ${v.notes ? `<div class="visit-notes">${esc(v.notes)}</div>` : ''}
+        ${audio || st ? `<div class="visit-foot">${audio}<span class="spacer"></span>${st ? `<span class="hs-st ${st[0]}">${st[1]}</span>` : ''}
+          ${v.hubspot_statut !== 'envoye' && v.hubspot_statut !== 'aucun' && (v.user_id === user?.id || isAdmin) ? '<button class="link-btn" data-act="v-retry">Renvoyer</button>' : ''}</div>` : ''}
+        ${v.hubspot_statut === 'erreur' && v.hubspot_erreur ? `<div class="hint visit-err">${esc(v.hubspot_erreur)}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+  async function loadVisits(clientId) {
+    try {
+      const { data, error } = await sb.from('visites').select('*').eq('client_id', clientId).order('at', { ascending: false }).limit(20);
+      if (error) throw error;
+      visitsCache.set(clientId, data);
+    } catch {
+      if (selectedId === clientId && $('#visitsBody')) $('#visitsBody').innerHTML = '<div class="crm-empty">Comptes rendus indisponibles pour le moment.</div>';
+      return;
+    }
+    if (selectedId === clientId && $('#visitsBody')) $('#visitsBody').innerHTML = visitsHtml(clientId);
+  }
+  // Affiche tout de suite un compte rendu enregistré ou mis à jour.
+  function noteVisit(v) {
+    const list = visitsCache.get(v.client_id) || [];
+    const i = list.findIndex(x => x.id === v.id); i >= 0 ? (list[i] = v) : list.unshift(v);
+    visitsCache.set(v.client_id, list);
+    if (!lastVisit.has(v.client_id) || lastVisit.get(v.client_id) < v.at) lastVisit.set(v.client_id, v.at);
+    if (selectedId === v.client_id && $('#visitsBody')) $('#visitsBody').innerHTML = visitsHtml(v.client_id);
+  }
+
+  async function rdvCall(action, payload) {
+    const { data, error } = await sb.functions.invoke('rdv', { body: { action, ...payload } });
+    if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch {} throw new Error(msg); }
+    if (data?.error) throw new Error(data.error);
+    return data;
+  }
+  async function listen(visiteId, btn) {
+    btn.disabled = true; btn.textContent = 'Chargement…';
+    try {
+      const { url } = await rdvCall('audio', { visite_id: visiteId });
+      const a = Object.assign(document.createElement('audio'), { controls: true, src: url, className: 'visit-audio' });
+      btn.replaceWith(a); a.play().catch(() => {});
+    } catch (e) { btn.disabled = false; btn.textContent = '🎧 Écouter'; toast(e.message, 5000); }
+  }
+
+  // Envoi vers HubSpot : dépôt de l'audio (gardé sur le téléphone jusqu'au succès), puis la fonction « rdv »
+  // écrit le compte rendu dans le rendez-vous et y joint l'enregistrement.
+  const sending = new Set();
+  async function sendToHubspot(visiteId, { quiet = false } = {}) {
+    if (sending.has(visiteId)) return;
+    sending.add(visiteId);
+    try {
+      const pending = await stock.get('envois', visiteId).catch(() => null);
+      if (pending) {
+        const path = `${visiteId}.${pending.ext}`;
+        const { error } = await sb.storage.from('enregistrements').upload(path, pending.blob, { contentType: pending.mime, upsert: true });
+        if (error) throw new Error(`dépôt de l’enregistrement impossible (${error.message})`);
+        const { error: e2 } = await sb.from('visites').update({ audio_path: path }).eq('id', visiteId);
+        if (e2) throw new Error(e2.message);
+      }
+      const { visite } = await rdvCall('envoyer', { visite_id: visiteId });
+      if (pending) await stock.del('envois', visiteId).catch(() => {});
+      noteVisit(visite);
+      if (!quiet) toast('Compte rendu envoyé dans HubSpot ✓', 2500);
+    } catch (e) {
+      if (!quiet) toast(navigator.onLine ? `HubSpot : ${e.message}` : 'Pas de réseau : le compte rendu partira vers HubSpot dès le retour du réseau.', 6000);
+      try { const { data } = await sb.from('visites').select('*').eq('id', visiteId).maybeSingle(); if (data) noteVisit(data); } catch {}
+    } finally { sending.delete(visiteId); }
+  }
+  // Au démarrage et au retour du réseau : on termine les envois interrompus.
+  async function flushPending() {
+    if (!user) return;
+    const ids = new Set();
+    try { for (const it of await stock.all('envois')) ids.add(it.visite_id); } catch {}
+    try {
+      const { data } = await sb.from('visites').select('id').eq('user_id', user.id).eq('hubspot_statut', 'en_attente').limit(50);
+      for (const r of data || []) ids.add(r.id);
+    } catch {}
+    for (const id of ids) await sendToHubspot(id, { quiet: true });
+  }
+  window.addEventListener('online', flushPending);
+
+  // ----- Fenêtre « Compte rendu » -----
+  const crDlg = $('#crDialog'), crForm = $('#crForm');
+  const cr = { client: null, rec: null, audio: null, consentAt: null, url: null };
+  const recording = () => cr.rec && cr.rec.etat !== 'arrete';
+  const toHubspot = () => !!cr.client?.hubspot_id && $('#crRdv').value !== 'none';
+
+  function openCr(c) {
+    if (recording()) return crDlg.showModal();
+    Object.assign(cr, { client: c, rec: null, audio: null, consentAt: null });
+    crForm.reset();
+    $('#crClient').textContent = [c.nom, c.ville].filter(Boolean).join(' · ');
+    showAudio(null);
+    $('#recRecover').hidden = true;
+    crDlg.showModal();
+    fillRdv(c);
+    brouillons(c.id).then(lost => { if (lost.length && !cr.audio && !recording()) offerRecover(lost[lost.length - 1]); });
+  }
+
+  async function fillRdv(c) {
+    const sel = $('#crRdv'), hint = $('#crRdvHint');
+    const base = '<option value="new">Nouveau rendez-vous (créé dans HubSpot)</option><option value="none">Ne pas envoyer dans HubSpot</option>';
+    if (!c.hubspot_id) {
+      sel.innerHTML = '<option value="none">Client non relié à HubSpot</option>'; sel.disabled = true;
+      hint.textContent = 'Le compte rendu reste dans l’appli. Pour l’envoyer dans HubSpot, reliez d’abord ce client (« Lier à HubSpot » sur sa fiche).';
+      return updateRecUi();
+    }
+    sel.disabled = false;
+    sel.innerHTML = '<option value="new">Recherche des rendez-vous HubSpot…</option>' + base.split('</option>').slice(1).join('</option>');
+    hint.textContent = '';
+    updateRecUi();
+    try {
+      const { rdv } = await rdvCall('liste', { client_id: c.id });
+      if (cr.client?.id !== c.id) return;
+      const label = r => {
+        const d = new Date(r.debut), today = new Date().toDateString() === d.toDateString();
+        return `${today ? 'Aujourd’hui' : d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })} ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} · ${r.titre}`;
+      };
+      sel.innerHTML = rdv.map(r => `<option value="${esc(r.id)}">${esc(label(r))}</option>`).join('') + base;
+      hint.textContent = rdv.length ? 'Le rendez-vous le plus proche de maintenant est choisi : changez-le si besoin.' : 'Aucun rendez-vous planifié dans HubSpot autour d’aujourd’hui : un rendez-vous sera créé.';
+    } catch (e) {
+      if (cr.client?.id !== c.id) return;
+      sel.innerHTML = base;
+      hint.textContent = `Rendez-vous HubSpot indisponibles (${e.message}). Un rendez-vous sera créé à l’envoi.`;
+    }
+    updateRecUi();
+  }
+  $('#crRdv').addEventListener('change', updateRecUi);
+  $('#recConsent').addEventListener('change', updateRecUi);
+
+  function updateRecUi() {
+    const ok = audioSupporte(), hs = toHubspot(), busy = recording() || !!cr.audio;
+    $('#recConsent').disabled = busy || !hs || !ok;
+    $('#recStart').disabled = busy || !hs || !ok || !$('#recConsent').checked;
+    $('#recStart').hidden = busy;
+    $('#recHint').textContent = !ok ? 'Cet appareil ne permet pas d’enregistrer depuis l’appli.'
+      : !hs ? 'L’enregistrement est joint au rendez-vous HubSpot : choisissez un rendez-vous ou « Nouveau rendez-vous ».'
+      : busy ? '' : 'Le fichier est joint au rendez-vous dans HubSpot, écoutable par toute l’équipe et supprimé automatiquement après 6 mois.';
+  }
+  function showAudio(audio) {
+    if (cr.url) URL.revokeObjectURL(cr.url);
+    cr.url = audio ? URL.createObjectURL(audio.blob) : null;
+    $('#recDone').hidden = !audio;
+    $('#recAudio').src = cr.url || '';
+    if (!audio) $('#recAudio').removeAttribute('src');
+    $('#recLive').hidden = true; $('#recWarn').hidden = true;
+    updateRecUi();
+  }
+  // Enregistrement retrouvé sur le téléphone (appli fermée pendant un rendez-vous).
+  function offerRecover(b) {
+    const box = $('#recRecover');
+    box.innerHTML = `<b>Enregistrement interrompu retrouvé</b> (${fmtChrono(b.duree)}, ${fmtDay(b.debut)}).
+      <div class="rec-row"><button type="button" class="btn ghost small" data-recover="drop">Le supprimer</button><button type="button" class="btn primary small" data-recover="keep">Le reprendre</button></div>`;
+    box.hidden = false;
+    box.onclick = async e => {
+      const what = e.target.closest('[data-recover]')?.dataset.recover; if (!what) return;
+      box.onclick = null; box.hidden = true;
+      if (what === 'drop') { await stock.del('brouillons', b.id).catch(() => {}); return updateRecUi(); }
+      cr.audio = { blob: new Blob(b.chunks, { type: String(b.mime).split(';')[0] }), ext: b.ext, mime: String(b.mime).split(';')[0], duree: b.duree, id: b.id };
+      cr.consentAt = b.consentement;
+      $('#recConsent').checked = true;
+      showAudio(cr.audio);
+    };
+  }
+
+  $('#recStart').addEventListener('click', async () => {
+    if (!$('#recConsent').checked) return;
+    cr.consentAt = new Date().toISOString();
+    cr.rec = new Enregistreur({
+      clientId: cr.client.id, consentement: cr.consentAt,
+      onTick: s => { $('#recTime').textContent = fmtChrono(s); },
+      onEtat: async etat => {
+        $('#recState').textContent = etat === 'pause' ? 'En pause' : 'Enregistrement…';
+        $('#recPause').textContent = etat === 'pause' ? 'Reprendre' : 'Pause';
+        $('#recLive').classList.toggle('paused', etat === 'pause');
+        if (etat === 'coupe') { toast('Le téléphone a coupé le micro (écran verrouillé ou appel ?). L’enregistrement est arrêté et gardé jusque-là.', 8000); await stopRec(); }
+      },
+    });
+    try {
+      await cr.rec.demarrer();
+      $('#recLive').hidden = false; $('#recWarn').hidden = false; $('#recTime').textContent = '0:00';
+      updateRecUi();
+    } catch (e) {
+      cr.rec = null;
+      toast(/denied|not allowed|permission/i.test(e?.message || e?.name || '') ? 'Micro refusé : autorisez le micro pour l’appli dans les réglages du téléphone.' : `Enregistrement impossible : ${e?.message || e}`, 6000);
+      updateRecUi();
+    }
+  });
+  $('#recPause').addEventListener('click', () => (cr.rec?.etat === 'pause' ? cr.rec.reprendre() : cr.rec?.pause()));
+  async function stopRec() {
+    if (!recording()) return;
+    const audio = await cr.rec.arreter();
+    cr.audio = audio?.blob?.size ? audio : null;
+    if (!cr.audio) toast('L’enregistrement est vide.', 3000);
+    showAudio(cr.audio);
+  }
+  $('#recStop').addEventListener('click', stopRec);
+  $('#recDelete').addEventListener('click', async () => {
+    if (!confirm('Supprimer cet enregistrement ?')) return;
+    if (cr.audio) await stock.del('brouillons', cr.audio.id).catch(() => {});
+    cr.audio = null; cr.consentAt = null; $('#recConsent').checked = false;
+    showAudio(null);
+  });
+
+  // Fermeture : pas de perte accidentelle d'un enregistrement.
+  function closeCr() {
+    if ((recording() || cr.audio) && !confirm('Abandonner ce compte rendu et son enregistrement ?')) return;
+    if (recording()) cr.rec.annuler();
+    else if (cr.audio) stock.del('brouillons', cr.audio.id).catch(() => {});
+    cr.rec = null; cr.audio = null; showAudio(null);
+    crDlg.close();
+  }
+  $('#crCancel').addEventListener('click', closeCr);
+  crDlg.addEventListener('cancel', e => { e.preventDefault(); closeCr(); });
+  crDlg.addEventListener('click', e => { if (e.target === crDlg) { e.stopImmediatePropagation(); closeCr(); } }, true);
+
+  crForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (recording()) await stopRec();
+    const f = crForm.elements, c = cr.client, target = $('#crRdv').value, hs = toHubspot();
+    const row = {
+      client_id: c.id, type: f.type.value, resultat: f.resultat.value || null, notes: f.notes.value.trim(), relance_le: f.relance_le.value || null,
+      hubspot_meeting_id: hs && /^\d+$/.test(target) ? target : null,
+      hubspot_statut: hs ? 'en_attente' : 'aucun',
+      audio_consentement: cr.audio ? cr.consentAt : null, audio_duree: cr.audio ? cr.audio.duree : null,
+    };
+    if (!row.resultat && !row.notes && !cr.audio) return toast('Indiquez au moins un résultat, une note ou un enregistrement.', 3500);
+    const btn = $('#crSave'); if (btn.disabled) return;
+    btn.disabled = true; btn.textContent = 'Enregistrement…';
+    try {
+      const v = await q(sb.from('visites').insert(row).select('*').single(), 'Compte rendu non enregistré');
+      if (cr.audio) {
+        await stock.put('envois', { visite_id: v.id, blob: cr.audio.blob, ext: cr.audio.ext, mime: cr.audio.mime }); // gardé jusqu'à l'envoi réussi
+        await stock.del('brouillons', cr.audio.id).catch(() => {});
+      }
+      cr.audio = null; cr.rec = null; showAudio(null);
+      crDlg.close();
+      noteVisit(v); renderList();
+      toast(hs ? 'Compte rendu enregistré · envoi vers HubSpot…' : 'Compte rendu enregistré', 2500);
+      if (hs) sendToHubspot(v.id);
+    } catch { /* message déjà affiché ; la fenêtre reste ouverte pour réessayer */ }
+    finally { btn.disabled = false; btn.textContent = 'Enregistrer'; }
+  });
+
+  // ----- Mes comptes rendus -----
+  const repDlg = $('#reportsDialog');
+  let repRows = [];
+  function openReports() {
+    repDlg.querySelector('.admin-only').hidden = !isAdmin;
+    $('#reportsExport').hidden = !isAdmin; // export réservé aux administrateurs, comme celui de la base
+    repDlg.showModal();
+    renderReports();
+  }
+  repDlg.addEventListener('change', e => { if (e.target.name === 'periode') renderReports(); });
+  async function renderReports() {
+    const per = repDlg.querySelector('[name=periode]:checked').value, list = $('#reportsList');
+    const since = new Date(Date.now() - (per === '30' ? 30 : 7) * 86400_000).toISOString();
+    list.innerHTML = '<li class="muted">Chargement…</li>';
+    try {
+      let req = sb.from('visites').select('*').gte('at', since).order('at', { ascending: false }).limit(500);
+      if (per !== 'equipe') req = req.eq('user_id', user.id);
+      repRows = await q(req, 'Chargement des comptes rendus');
+      list.innerHTML = repRows.map(v => {
+        const c = byId(v.client_id), st = HS_STATUT[v.hubspot_statut];
+        return `<li class="click" data-client="${esc(v.client_id)}"><div class="grow">
+          <div class="t">${esc(c?.nom || 'Client supprimé')}${v.audio_consentement ? ' <span class="s">🎙</span>' : ''}</div>
+          <div class="s">${fmtDay(v.at)} · ${v.type === 'appel' ? 'Appel' : 'Visite'}${v.resultat ? ` · ${RESULTATS[v.resultat]}` : ''}${per === 'equipe' ? ` · ${esc(v.user_email)}` : ''}</div></div>
+          ${st ? `<span class="hs-st ${st[0]}">${st[0] === 'ok' ? 'HubSpot ✓' : st[0] === 'err' ? 'Échec' : 'En attente'}</span>` : ''}</li>`;
+      }).join('') || '<li class="muted">Aucun compte rendu sur cette période.</li>';
+    } catch { repRows = []; list.innerHTML = '<li class="muted">Comptes rendus indisponibles pour le moment.</li>'; }
+    // Mes clients sans visite depuis plus de 30 jours, les plus anciens d'abord.
+    const mine = clients.filter(c => c.assigned_to === myEmail());
+    const stale = mine.filter(c => !lastVisit.has(c.id) || daysAgo(lastVisit.get(c.id)) > 30)
+      .sort((a, b) => (lastVisit.get(a.id) || '').localeCompare(lastVisit.get(b.id) || ''));
+    $('#staleList').innerHTML = !mine.length ? '<li class="muted">Aucun client ne vous est attribué (« Je m’en occupe » sur une fiche).</li>'
+      : stale.map(c => `<li class="click" data-client="${esc(c.id)}">${avatar(c)}<div class="grow"><div class="t">${esc(c.nom)}</div>
+          <div class="s">${lastVisit.has(c.id) ? seenLabel(lastVisit.get(c.id)) : 'jamais vu'}${c.ville ? ` · ${esc(c.ville)}` : ''}</div></div><span class="d">${fmtDist(distTo(c))}</span></li>`).join('')
+        || '<li class="muted">Tous vos clients ont été vus ces 30 derniers jours. 👍</li>';
+  }
+  repDlg.addEventListener('click', e => {
+    const li = e.target.closest('[data-client]'); if (!li || !byId(li.dataset.client)) return;
+    repDlg.close(); select(li.dataset.client);
+  });
+  $('#reportsExport').addEventListener('click', () => {
+    if (!repRows.length) return toast('Rien à exporter sur cette période.');
+    const rows = repRows.map(v => { const c = byId(v.client_id) || {}; return {
+      date: new Date(v.at).toLocaleString('fr-FR'), commercial: v.user_email, client: c.nom || '', code_client: c.code_client || '', ville: c.ville || '',
+      type: v.type === 'appel' ? 'Appel' : 'Visite', resultat: RESULTATS[v.resultat] || '', notes: v.notes || '', relance: v.relance_le ? fmtDate(v.relance_le) : '',
+      enregistrement: v.audio_consentement ? fmtChrono(v.audio_duree || 0) : '', hubspot: HS_STATUT[v.hubspot_statut]?.[1] || '' }; });
+    const blob = new Blob(['﻿' + Papa.unparse(rows, { delimiter: ';' })], { type: 'text/csv;charset=utf-8' });
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `comptes-rendus-${new Date().toISOString().slice(0, 10)}.csv` });
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   });
 
   // ---------- Corbeille ----------
@@ -925,6 +1260,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
         if (page.length < 1000) break;
       }
       const favs = await q(sb.from('favorites').select('client_id'), 'Chargement des favoris');
+      await loadLastVisits();
       clients = all.map(clean);
       favorites = new Set(favs.map(f => f.client_id));
       saveCache();
@@ -1395,6 +1731,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     if (action === 'manage' || action === 'back') { menuPage(action === 'manage' ? 'manage' : 'main'); return; }
     menu.hidden = true;
     if (action === 'add') openForm();
+    if (action === 'reports') openReports();
     if (action === 'export') exportCsv();
     if (action === 'members') { membersDlg.showModal(); renderMembers(); }
     if (action === 'crmfields') openFields();
@@ -1535,7 +1872,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     if (!session) {
       sessionUserId = null; user = null; isAdmin = false; mfa.active = false; autoLocated = false;
       channel?.unsubscribe(); channel = null; stopWatch();
-      clients = []; favorites = new Set(); closeDetail(); renderMarkers(); renderChips(); renderList();
+      clients = []; favorites = new Set(); lastVisit = new Map(); visitsCache.clear(); closeDetail(); renderMarkers(); renderChips(); renderList();
       showAuth('form', landingMsg); landingMsg = null; // message d'un lien expiré : affiché une fois
       return;
     }
@@ -1560,6 +1897,7 @@ import { FIELDS, mappingKey, guessMapping, readTable, planImport } from './js/im
     await loadData();
     subscribe();
     startWatch();
+    flushPending();
   }
 
   // ---------- Démarrage ----------

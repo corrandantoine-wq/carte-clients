@@ -20,11 +20,11 @@ test('menu : usage quotidien d’abord, gestion de la base sur une 2e page', asy
   await expect(page.locator('[data-action=add]')).toBeVisible();
 });
 
-test('fiche : 3 boutons, Waze par défaut, choix de l’appli mémorisé', async ({ page }) => {
+test('fiche : 4 boutons (dont Compte rendu), Waze par défaut, choix de l’appli mémorisé', async ({ page }) => {
   await seed(page, { clients: [client('a', 'Client Paris', 'Paris', 48.8566, 2.3522)] });
   await login(page);
   await page.click('#list li[data-id="a"]');
-  await expect(page.locator('.d-actions .act')).toHaveCount(3);
+  await expect(page.locator('.d-actions .act')).toHaveCount(4);
   await expect(page.locator('[data-nav]')).toHaveAttribute('href', /waze\.com/);
   await page.click('[data-act=more]');
   await expect(page.locator('#moreList')).toContainText('Itinéraire avec Google Maps');

@@ -8,7 +8,7 @@
             { id: 'u-bob', email: 'bob@soc.fr', password: 'motdepasse1', confirmed: true },
             { id: 'u-intrus', email: 'intrus@gmail.com', password: 'motdepasse1', confirmed: true }],
     members: [{ email: 'admin@soc.fr', role: 'admin' }, { email: 'bob@soc.fr', role: 'user' }],
-    clients: [], favorites: [], client_history: [], invites: [],
+    clients: [], favorites: [], client_history: [], invites: [], visites: [], storage: {}, hubspot: { meetings: {}, files: {}, calls: [] },
     crm_fields: [{ property: 'name', label: 'Nom dans le CRM', position: 1 }, { property: 'lifecyclestage', label: 'Étape du cycle de vie', position: 2 }, { property: 'notes_last_contacted', label: 'Dernier contact', position: 3 }],
   };
   for (const [k, v] of Object.entries(window.__SEED__ || {})) db[k] = Array.isArray(db[k]) ? [...db[k], ...v] : v;
@@ -48,12 +48,21 @@
     neq(k, v) { this.f.push(r => r[k] !== v); return this; }
     not(k, op, v) { this.f.push(r => r[k] != null); return this; }
     is(k, v) { this.f.push(r => (r[k] ?? null) === v); return this; }
+    gte(k, v) { this.f.push(r => r[k] >= v); return this; }
     limit(n) { this.lim = n; return this; }
     order(k, o = {}) { this.ord = k; this.desc = o.ascending === false; return this; }
     range(a, b) { this.rg = [a, b]; return this; }
     single() { this.one = true; return this; }
     maybeSingle() { this.one = 'maybe'; return this; }
-    rows() { let rows = db[this.t]; if (this.t === 'favorites') rows = rows.filter(r => r.user_id === uid()); return rows.filter(r => this.f.every(fn => fn(r))); }
+    rows() {
+      let rows = db[this.t];
+      if (this.t === 'favorites') rows = rows.filter(r => r.user_id === uid());
+      if (this.t === 'dernieres_visites') { // vue : dernière visite de chaque client
+        const m = new Map(); for (const v of db.visites) if (!m.has(v.client_id) || m.get(v.client_id) < v.at) m.set(v.client_id, v.at);
+        rows = [...m].map(([client_id, at]) => ({ client_id, at }));
+      }
+      return rows.filter(r => this.f.every(fn => fn(r)));
+    }
     then(res, rej) {
       let out;
       if (this.op === 'select') {
@@ -66,6 +75,8 @@
           const row = { ...r };
           if (this.t === 'clients') Object.assign(row, { id: crypto.randomUUID(), created_by: uid(), hubspot_id: r.hubspot_id ?? null, deleted_at: r.deleted_at ?? null, assigned_to: r.assigned_to ?? null });
           if (this.t === 'favorites') row.user_id = uid();
+          if (this.t === 'visites') Object.assign(row, { id: crypto.randomUUID(), at: new Date().toISOString(), user_id: uid(), user_email: session.user.email,
+            type: r.type || 'visite', notes: r.notes || '', hubspot_statut: r.hubspot_statut || 'aucun', audio_path: null, hubspot_file_id: null, hubspot_erreur: null });
           if (this.op === 'upsert') { const k = this.key; const ex = row[k] != null && db[this.t].find(x => x[k] === row[k]); if (ex) { const before = { ...ex }; Object.assign(ex, r); if (this.t === 'clients') logUpdate(before, ex); return { ...ex }; } }
           db[this.t].push(row); if (this.t === 'clients') log('création', row); return row;
         });
@@ -91,6 +102,11 @@
   const client = {
     from: t => new Q(t),
     rpc: async (fn, { items }) => { let n = 0; for (const it of items) { const c = db.clients.find(x => x.id === it.id); if (c) { c.lat = it.lat; c.lng = it.lng; n++; } } return { data: n, error: null }; },
+    // Stockage de fichiers (enregistrements en attente de transfert vers HubSpot).
+    storage: { from: bucket => ({
+      upload: async (path, blob, o = {}) => { db.storage[`${bucket}/${path}`] = { size: blob.size, type: o.contentType }; return { data: { path }, error: null }; },
+      remove: async paths => { for (const p of paths) delete db.storage[`${bucket}/${p}`]; return { data: [], error: null }; },
+    }) },
     channel: () => ({ on() { return this; }, subscribe() { return this; }, unsubscribe() {} }),
     functions: { invoke: async (name, { body }) => {
       if (name === 'inviter') { // reproduit supabase/functions/inviter (avec le délai d'un vrai appel réseau)
@@ -107,6 +123,33 @@
         return { data: { status: 'invité' } };
       }
       await new Promise(r => setTimeout(r, 300));
+      if (name === 'rdv') { // reproduit supabase/functions/rdv (HubSpot simulé)
+        db.hubspot.calls.push(body);
+        if (body.action === 'liste') {
+          const c = db.clients.find(x => x.id === body.client_id);
+          if (!c?.hubspot_id) return { data: { rdv: [] } };
+          const now = Date.now(), iso = t => new Date(t).toISOString();
+          return { data: { rdv: window.__SEED__?.rdv ?? [
+            { id: '7001', titre: 'Présentation gamme', debut: iso(now - 20 * 60e3), fin: iso(now + 40 * 60e3), resultat: 'SCHEDULED' },
+            { id: '7002', titre: 'Point livraison', debut: iso(now + 3 * 86400e3), fin: iso(now + 3 * 86400e3 + 36e5), resultat: 'SCHEDULED' }] } };
+        }
+        const v = db.visites.find(x => x.id === body.visite_id);
+        if (!v) return { data: { error: 'Compte rendu introuvable' } };
+        if (body.action === 'audio') return { data: v.hubspot_file_id ? { url: 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=' } : { error: 'Pas d’enregistrement.' } };
+        if (body.action === 'envoyer') {
+          if (window.__SEED__?.hubspotDown) { Object.assign(v, { hubspot_statut: 'erreur', hubspot_erreur: 'HubSpot 503 : service indisponible' }); return { data: { error: 'HubSpot 503 : service indisponible' } }; }
+          const mid = v.hubspot_meeting_id || '9001';
+          const m = db.hubspot.meetings[mid] ||= { notes: '', attachments: [] };
+          if (v.audio_path) {
+            if (!db.storage[`enregistrements/${v.audio_path}`]) return { data: { error: 'enregistrement introuvable' } };
+            v.hubspot_file_id = 'f' + Object.keys(db.hubspot.files).length; db.hubspot.files[v.hubspot_file_id] = db.storage[`enregistrements/${v.audio_path}`];
+            m.attachments.push(v.hubspot_file_id); delete db.storage[`enregistrements/${v.audio_path}`];
+          }
+          m.notes = `CR ${v.id} : ${v.notes}`; m.outcome = v.resultat === 'absent' ? 'NO_SHOW' : 'COMPLETED';
+          Object.assign(v, { hubspot_meeting_id: mid, hubspot_statut: 'envoye', hubspot_erreur: null, audio_path: null });
+          return { data: { visite: { ...v } } };
+        }
+      }
       if (body.action === 'search') return { data: { results: [
         { id: '1001', name: body.q + ' (HubSpot)', detail: '12 rue de Rivoli, 75004 Paris · dupont.fr' },
         { id: '1002', name: body.q + ' Lyon', detail: '69007 Lyon' }] } };

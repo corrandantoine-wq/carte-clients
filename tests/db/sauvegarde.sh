@@ -25,7 +25,7 @@ psql "$R" -q -f "$ROOT/tests/db/stub-auth.sql" 2>/dev/null
 psql "$R" -qc "create table auth.identities (id uuid primary key, user_id uuid references auth.users(id))"
 printf '%s\n%s\n' "$PASS" RESTAURER | bash "$ROOT/outils/restaurer.sh" sauvegarde-*.tar.gz.gpg "$R"
 check() { [ "$2" = "$3" ] || { echo "❌ $1 : attendu $3, obtenu $2"; exit 1; }; echo "ok : $1"; }
-for t in clients members crm_fields client_history favorites; do
+for t in clients members crm_fields client_history favorites visites; do
   check "table $t restaurée" "$(psql "$R" -tAc "select count(*) from public.$t")" "$(psql "$DB" -tAc "select count(*) from public.$t")"
 done
 check "comptes restaurés" "$(psql "$R" -tAc 'select count(*) from auth.users')" "$(psql "$DB" -tAc 'select count(*) from auth.users')"
