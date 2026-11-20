@@ -74,6 +74,12 @@ import { optimiser, troncons, MAX_ETAPES } from './js/tournee.js';
 
   // ---------- Connexion à Supabase ----------
   const cfg = window.CARTE_CLIENTS_CONFIG || {};
+  // Nom de l'entreprise cliente (un espace par entreprise : voir le dossier entreprises/).
+  if (cfg.entreprise) {
+    document.title = `Carte Clients · ${cfg.entreprise}`;
+    const el = document.getElementById('authCompany');
+    if (el) { el.textContent = cfg.entreprise; el.hidden = false; }
+  }
   const sb = cfg.supabaseUrl && cfg.supabaseAnonKey && window.supabase
     ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, autoRefreshToken: true } })
     : null;
@@ -2130,7 +2136,7 @@ import { optimiser, troncons, MAX_ETAPES } from './js/tournee.js';
     $('#menuAvatar').textContent = initials(user.email);
     $('#menuAvatar').style.background = colorFor(user.email);
     $('#menuEmail').textContent = user.email;
-    $('#menuRole').textContent = isAdmin ? 'Administrateur' : 'Collaborateur';
+    $('#menuRole').textContent = (isAdmin ? 'Administrateur' : 'Collaborateur') + (cfg.entreprise ? ` · ${cfg.entreprise}` : '');
     document.querySelector('.admin-only').hidden = !isAdmin;
     await loadMemberEmails();
     loadTour();
