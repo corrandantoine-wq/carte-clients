@@ -24,6 +24,19 @@
     indexedDB.open = (name, v) => open('demo-' + name, v);
   } catch {}
 
+  // Mode automatique (adresse terminée par #auto) : la démo se joue toute seule, pour la filmer.
+  const auto = location.hash === '#auto';
+  if (auto) {
+    // Micro simulé : pas de fenêtre d'autorisation pendant le tournage (le son n'est pas utile à la vidéo).
+    try {
+      navigator.mediaDevices.getUserMedia = async () => {
+        const ctx = new AudioContext(), dest = ctx.createMediaStreamDestination(), osc = ctx.createOscillator(), g = ctx.createGain();
+        g.gain.value = 0; osc.connect(g); g.connect(dest); osc.start(); await ctx.resume().catch(() => {});
+        return dest.stream;
+      };
+    } catch {}
+  }
+
   let html = await (await fetch('../index.html', { cache: 'no-store' })).text();
   html = html
     .replace('<head>', '<head><base href="../">')
@@ -46,6 +59,7 @@
       f.querySelector('[name=email]').value = window.__DEMO__.email;
       f.querySelector('[name=password]').value = window.__DEMO__.password;
       document.querySelector('#authSubmit').click();
+      if (auto) { const sc = document.createElement('script'); sc.src = 'demo/auto.js'; document.body.appendChild(sc); }
     }, 700);
   }, 200);
 })();
