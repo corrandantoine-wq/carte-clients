@@ -1,0 +1,10 @@
+{
+  "name": "Démo Carte Clients",
+  "short_name": "Démo Clients",
+  "start_url": "./index.html?auto",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#15233f",
+  "theme_color": "#15233f",
+  "icons": [{ "src": "../icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
