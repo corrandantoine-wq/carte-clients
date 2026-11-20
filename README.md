@@ -29,6 +29,8 @@ Web app (installable sur mobile) qui affiche la **base clients commune de l'équ
 | `js/geo.js` | Services IGN : géocodage des adresses (unitaire et par lot), itinéraires |
 | `js/importer.js` | Import ERP : lecture CSV ou Excel, reconnaissance des colonnes, préparation |
 | `js/icons.js` | Icônes |
+| `demo/` | Démonstration avec des données fictives |
+| `entreprises/` | Espaces des entreprises clientes (`modele/`, `espace.js`) et `outils/nouvelle_entreprise.py` |
 | `js/tournee.js` | Tournées : ordre de visite optimisé, durée de chaque tronçon |
 | `js/enregistreur.js` | Enregistrement audio des rendez-vous, sauvegarde sur le téléphone et file d'envoi |
 | `config.js` | Adresse du projet Supabase et clé publique « anon » |
@@ -107,6 +109,22 @@ La clé « anon » est faite pour être publique. Ne mettez **jamais** la clé *
 3. **Premier administrateur** : Supabase → *Authentication → Users → Invite user* avec votre adresse (déjà déclarée admin à l'étape 2 de l'installation). Suivez le lien reçu pour choisir votre mot de passe.
 4. Menu ☰ → **Gérer la base clients** → **Collaborateurs** : saisissez l'adresse d'un collègue et cliquez sur **Inviter**. Il reçoit un e-mail pour choisir son mot de passe. Le bouton ✉ renvoie l'invitation si besoin.
 4. Menu ☰ → **Gérer la base clients** → **Champs HubSpot affichés** : cochez les informations du CRM à montrer sur les fiches.
+
+## Démonstration
+`https://corrandantoine-wq.github.io/carte-clients/demo/` : la vraie interface avec **42 entreprises fictives autour de Lyon**, une position simulée (Lyon Part-Dieu) et une connexion automatique. Rien n'est relié à une vraie base : tout reste dans le navigateur et disparaît à la fermeture. Idéal pour filmer la vidéo de présentation ou montrer l'appli à un prospect. Fichiers : `demo/`.
+
+## Héberger une nouvelle entreprise cliente
+Chaque entreprise a **son propre projet Supabase** (aucun lien entre les données) et **son adresse** : `https://corrandantoine-wq.github.io/carte-clients/entreprises/<nom>/`. Le code de l'appli est le même pour tous : une mise à jour profite à toutes les entreprises.
+
+**Une seule fois** : Supabase → *Account → Access Tokens* → créez un jeton, puis GitHub → *Settings → Secrets and variables → Actions* → secret `SUPABASE_ACCESS_TOKEN`. Pour des e-mails d'invitation fiables, ajoutez aussi les secrets `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_EXPEDITEUR` d'un service d'envoi professionnel (le Gmail personnel est limité et peu professionnel).
+
+**Pour chaque entreprise (10 minutes, depuis le téléphone)** :
+1. Supabase → *New project* : nom de l'entreprise, région **Europe (Frankfurt)**, offre **Pro** conseillée (sauvegardes quotidiennes, pas de mise en pause). Notez la référence du projet (*Project Settings → General → Project ID*).
+2. GitHub → *Actions* → **Nouvelle entreprise cliente** → *Run workflow* : nom court de l'espace, nom de l'entreprise, référence du projet, e-mail du premier administrateur.
+3. La tâche installe la base (toutes les migrations), ferme les inscriptions, active la double vérification, met les e-mails en français, déploie les fonctions, crée l'espace sur le site et **invite le premier administrateur**. Le résumé de la tâche donne l'adresse de l'appli.
+4. Si l'entreprise utilise HubSpot : ajoutez le secret `HUBSPOT_TOKEN` dans **son** projet Supabase (*Edge Functions → Secrets*).
+
+Avant de facturer : conditions générales et contrat de traitement des données signés (brouillon dans le projet Claude « Carte Clients »).
 
 ## Sauvegardes
 Chaque nuit, GitHub sauvegarde la base Supabase (workflow « Sauvegarde quotidienne »). Les données de l'appli et les comptes des collaborateurs sont **chiffrés** et conservés **30 jours** (onglet **Actions** → une exécution → **Artifacts**). La même tâche garde la base active : l'offre gratuite de Supabase la met en pause après 7 jours sans activité.
