@@ -53,7 +53,9 @@ test('administrateur : accès à l’appli et au menu d’administration', async
   await expect(page.locator('#auth')).toBeHidden();
   await page.click('#userBtn');
   await expect(page.locator('#menuRole')).toHaveText('Administrateur');
-  await expect(page.locator('.admin-only')).toBeVisible();
+  await page.click('[data-action=manage]');
+  await expect(page.locator('#menu .admin-only')).toBeVisible();
+  await page.click('[data-action=back]');
   await page.click('[data-action=logout]');
   await expect(page.locator('#auth')).toBeVisible();
 });
@@ -62,5 +64,7 @@ test('collaborateur : pas de menu d’administration', async ({ page }) => {
   await login(page, 'bob@soc.fr');
   await page.click('#userBtn');
   await expect(page.locator('#menuRole')).toHaveText('Collaborateur');
-  await expect(page.locator('.admin-only')).toBeHidden();
+  await page.click('[data-action=manage]');
+  await expect(page.locator('[data-action=trash]')).toBeVisible();
+  await expect(page.locator('#menu .admin-only')).toBeHidden();
 });

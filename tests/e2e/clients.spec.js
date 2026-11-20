@@ -9,7 +9,7 @@ test('import du fichier d’exemple : 10 clients localisés et triés par distan
   const result = await importFile(page, SAMPLE);
   expect(result).toContain('10 clients ajoutés');
   expect(await page.evaluate(() => window.__db.clients.filter(c => c.lat != null).length)).toBe(10);
-  await page.click('.chip[data-r="0"]');
+  await page.selectOption('#radiusSel', '0');
   await expect(page.locator('#list li[data-id]')).toHaveCount(10);
   await expect(page.locator('#list li[data-id]').first()).toContainText('Boulangerie Dupont'); // le plus proche de Paris
 });
@@ -17,10 +17,10 @@ test('import du fichier d’exemple : 10 clients localisés et triés par distan
 test('le rayon filtre la liste', async ({ page }) => {
   await seed(page, { clients: [client('c1', 'Proche', 'Paris', 48.861, 2.341), client('c2', 'Lointain', 'Lyon', 45.76, 4.83)] });
   await login(page);
-  await page.click('.chip[data-r="5"]');
+  await page.selectOption('#radiusSel', '5');
   await expect(page.locator('#list li[data-id]')).toHaveCount(1);
   await expect(page.locator('#subtitle')).toContainText('1 client à moins de 5 km');
-  await page.click('.chip[data-r="0"]');
+  await page.selectOption('#radiusSel', '0');
   await expect(page.locator('#list li[data-id]')).toHaveCount(2);
 });
 

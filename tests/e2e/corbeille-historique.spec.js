@@ -20,6 +20,7 @@ test('la corbeille : un collaborateur restaure, un admin supprime définitivemen
   await login(page, 'bob@soc.fr');
   await expect(page.locator('#list li[data-id]')).toHaveCount(1); // les clients à la corbeille ne s'affichent pas
   await page.click('#menuBtn');
+  await page.click('[data-action=manage]');
   await page.click('[data-action=trash]');
   await expect(page.locator('#trashList li[data-id="c1"]')).toContainText('Ancien client');
   await expect(page.locator('#trashList [data-purge]')).toHaveCount(0); // pas de suppression définitive pour un collaborateur
@@ -33,6 +34,7 @@ test('l’admin vide la corbeille', async ({ page }) => {
   await seed(page, { clients: [client('c1', 'A jeter', 'u-bob', { deleted_at: '2026-11-10T10:00:00Z' })] });
   await login(page);
   await page.click('#menuBtn');
+  await page.click('[data-action=manage]');
   await page.click('[data-action=trash]');
   await page.click('#trashEmpty');
   await expect(page.locator('#trashList')).toContainText('La corbeille est vide');

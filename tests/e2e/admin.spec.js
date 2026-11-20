@@ -4,6 +4,7 @@ const { test, expect, seed, login } = require('../support/fixtures');
 test('inviter un collaborateur : ajout à la liste et e-mail d’invitation', async ({ page }) => {
   await login(page);
   await page.click('#userBtn');
+  await page.click('[data-action=manage]');
   await page.click('[data-action=members]');
   await page.fill('#memberForm [name=email]', 'Claire@Soc.fr');
   await page.click('#memberForm .btn');
@@ -16,6 +17,7 @@ test('inviter un collaborateur : ajout à la liste et e-mail d’invitation', as
 test('renvoyer l’invitation à quelqu’un qui a déjà un compte actif', async ({ page }) => {
   await login(page);
   await page.click('#userBtn');
+  await page.click('[data-action=manage]');
   await page.click('[data-action=members]');
   await page.click('#membersList li[data-email="bob@soc.fr"] [data-invite]');
   await expect(page.locator('#toastMsg')).toContainText('bob@soc.fr a déjà un compte actif');
@@ -24,6 +26,7 @@ test('renvoyer l’invitation à quelqu’un qui a déjà un compte actif', asyn
 test('double clic sur « Inviter » : une seule invitation, aucun message d’erreur', async ({ page }) => {
   await login(page);
   await page.click('#userBtn');
+  await page.click('[data-action=manage]');
   await page.click('[data-action=members]');
   await page.fill('#memberForm [name=email]', 'claire@soc.fr');
   await page.dblclick('#memberForm .btn');
@@ -38,6 +41,7 @@ test('renvoyer une invitation encore en attente', async ({ page }) => {
   await seed(page, { members: [{ email: 'gre@soc.fr', role: 'user' }], users: [{ id: 'u-gre', email: 'gre@soc.fr', password: null, confirmed: false }] });
   await login(page);
   await page.click('#userBtn');
+  await page.click('[data-action=manage]');
   await page.click('[data-action=members]');
   const resend = page.locator('#membersList li[data-email="gre@soc.fr"] [data-invite]');
   await resend.click(); await resend.click(); // deux appuis rapides
@@ -48,6 +52,7 @@ test('renvoyer une invitation encore en attente', async ({ page }) => {
 test('choisir les champs HubSpot affichés', async ({ page }) => {
   await login(page);
   await page.click('#userBtn');
+  await page.click('[data-action=manage]');
   await page.click('[data-action=crmfields]');
   await page.check('#fieldsList input[value=annualrevenue]');
   await page.click('#fieldsSave');

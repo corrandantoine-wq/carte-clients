@@ -27,6 +27,7 @@ test.describe('téléphone tenu à l’horizontale', () => {
     expect(menu.y + menu.height).toBeLessThanOrEqual(page.viewportSize().height); // le menu tient dans l'écran
     await page.locator('[data-action=logout]').scrollIntoViewIfNeeded();
     await expect(page.locator('[data-action=logout]')).toBeInViewport();
+    await page.click('[data-action=manage]');
     await page.click('[data-action=members]');                   // bouton du bas du menu, cliquable
     await expect(page.locator('#membersDialog')).toBeVisible();
     const dernier = page.locator(`#membersList li[data-email="${LONG}"] .t`);
@@ -41,6 +42,7 @@ test('collaborateurs : l’adresse e-mail complète n’est jamais cachée par l
   await seed(page, { members: [{ email: LONG, role: 'user' }] });
   await login(page);
   await page.click('#userBtn');
+  await page.click('[data-action=manage]');
   await page.click('[data-action=members]');
   for (const email of ['bob@soc.fr', LONG]) {
     const li = page.locator(`#membersList li[data-email="${email}"]`);

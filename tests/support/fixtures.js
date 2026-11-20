@@ -51,8 +51,11 @@ const test = base.extend({
     await page.route(/data\.geopf\.fr\/navigation\/itineraire/, r => {
       const u = new URL(r.request().url());
       const a = u.searchParams.get('start').split(',').map(Number), b = u.searchParams.get('end').split(',').map(Number);
-      const d = km(a, b) * 1.3;
-      r.fulfill({ json: { start: a.join(','), end: b.join(','), distance: d, duration: d / 50 * 60, geometry: { type: 'LineString', coordinates: [a, b] } } });
+      const via = (u.searchParams.get('intermediates') || '').split('|').filter(Boolean).map(p => p.split(',').map(Number));
+      const pts = [a, ...via, b];
+      const portions = pts.slice(1).map((p, i) => { const d = km(pts[i], p) * 1.3; return { distance: d, duration: d / 50 * 60 }; });
+      const d = portions.reduce((s, p) => s + p.distance, 0);
+      r.fulfill({ json: { start: a.join(','), end: b.join(','), distance: d, duration: d / 50 * 60, portions, geometry: { type: 'LineString', coordinates: pts } } });
     });
     page.on('dialog', d => d.accept(d.type() === 'prompt' ? 'SUPPRIMER' : undefined));
     const errors = [];

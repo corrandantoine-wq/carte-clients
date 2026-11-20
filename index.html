@@ -39,21 +39,29 @@
       <div><div id="menuEmail" class="menu-email"></div><div id="menuRole" class="menu-role"></div></div>
     </div>
     <div class="menu-sep"></div>
-    <div class="menu-title">Base clients commune</div>
-    <button data-action="add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Ajouter un client</button>
-    <label class="menu-item"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Importer un fichier (CSV, Excel)<input id="csvInput" type="file" accept=".csv,.txt,.xlsx,.xls,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" hidden></label>
-    <button data-action="trash"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>Corbeille</button>
-    <button data-action="geocode"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg>Géocoder les adresses manquantes</button>
-    <div class="admin-only" hidden>
+    <!-- Page principale : seulement l'usage quotidien -->
+    <div id="menuMain">
+      <button data-action="add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Ajouter un client</button>
+      <button data-action="tour"><svg viewBox="0 0 24 24"><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M6 17V9a4 4 0 0 1 4-4h6M18 7v8a4 4 0 0 1-4 4H8"/></svg><span class="grow">Ma tournée</span><span id="tourCount" class="menu-count" hidden></span></button>
+      <button data-action="reports"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM9 9h6M9 13h6M9 17h3"/></svg>Mes comptes rendus</button>
+      <button data-action="manage"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="7" cy="18" r="1.6"/></svg><span class="grow">Gérer la base clients</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
       <div class="menu-sep"></div>
-      <div class="menu-title">Administration</div>
-      <button data-action="export"><svg viewBox="0 0 24 24"><path d="M12 20V9M7 14l5-5 5 5M5 4h14"/></svg>Exporter en CSV</button>
-      <button data-action="members"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/></svg>Collaborateurs</button>
-      <button data-action="crmfields"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h6"/></svg>Champs HubSpot affichés</button>
-      <button data-action="clear" class="danger"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>Tout mettre à la corbeille</button>
+      <button data-action="logout"><svg viewBox="0 0 24 24"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg>Se déconnecter</button>
     </div>
-    <div class="menu-sep"></div>
-    <button data-action="logout"><svg viewBox="0 0 24 24"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg>Se déconnecter</button>
+    <!-- Page « Gérer la base clients » : import, corbeille et administration -->
+    <div id="menuManage" hidden>
+      <button data-action="back" class="menu-back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>Gérer la base clients</button>
+      <label class="menu-item"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Importer un fichier (CSV, Excel)<input id="csvInput" type="file" accept=".csv,.txt,.xlsx,.xls,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" hidden></label>
+      <button data-action="trash"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>Corbeille</button>
+      <div class="admin-only" hidden>
+        <div class="menu-sep"></div>
+        <div class="menu-title">Administration</div>
+        <button data-action="members"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/></svg>Collaborateurs</button>
+        <button data-action="crmfields"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h6"/></svg>Champs HubSpot affichés</button>
+        <button data-action="export"><svg viewBox="0 0 24 24"><path d="M12 20V9M7 14l5-5 5 5M5 4h14"/></svg>Exporter en CSV</button>
+        <button data-action="clear" class="danger"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>Tout mettre à la corbeille</button>
+      </div>
+    </div>
   </nav>
 
   <!-- Boutons flottants de la carte -->
@@ -108,6 +116,17 @@
         <ul id="rSuggest" class="pick-list route-suggest"></ul>
         <div id="rResult"></div>
       </div>
+    </div>
+
+    <!-- Vue tournée -->
+    <div id="tourView" class="view" hidden>
+      <div class="detail-top">
+        <button id="tourBack" class="round-btn" aria-label="Retour"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+        <h2 class="route-title">Ma tournée</h2>
+        <span class="spacer"></span>
+        <button id="toursBtn" class="round-btn" aria-label="Tournées enregistrées" title="Tournées enregistrées"><svg viewBox="0 0 24 24"><path d="M5 4h14v16l-7-4-7 4z"/></svg></button>
+      </div>
+      <div id="tourBody" class="tour-body"></div>
     </div>
 
     <!-- Vue fiche client -->
@@ -205,6 +224,121 @@
       </div>
     </div>
   </section>
+
+  <!-- Compte rendu de visite (avec enregistrement du rendez-vous) -->
+  <dialog id="crDialog" class="panel-dlg wide">
+    <form id="crForm" class="dlg-body" novalidate>
+      <div class="dlg-grab"></div>
+      <h2 id="crTitle">Compte rendu</h2>
+      <p id="crClient" class="hint"></p>
+
+      <div class="cr-section">
+        <div class="cr-label">Rendez-vous HubSpot</div>
+        <select id="crRdv" class="dlg-input" aria-label="Rendez-vous HubSpot"></select>
+        <p id="crRdvHint" class="hint"></p>
+      </div>
+
+      <div class="cr-section">
+        <div class="cr-label">Type</div>
+        <div class="seg" role="radiogroup" aria-label="Type">
+          <label><input type="radio" name="type" value="visite" checked><span>Visite</span></label>
+          <label><input type="radio" name="type" value="appel"><span>Appel</span></label>
+        </div>
+      </div>
+
+      <div class="cr-section">
+        <div class="cr-label">Enregistrement du rendez-vous</div>
+        <div id="recBox" class="rec-box">
+          <label class="rec-consent"><input type="checkbox" id="recConsent"><span><b>Le client a accepté d’être enregistré.</b> Obligatoire : enregistrer quelqu’un sans son accord est interdit.</span></label>
+          <div class="rec-row">
+            <button type="button" id="recStart" class="btn rec-btn" disabled><span class="rec-dot"></span>Enregistrer le rendez-vous</button>
+          </div>
+          <div id="recLive" class="rec-live" hidden>
+            <span class="rec-dot live"></span><span id="recTime" class="rec-time">0:00</span><span id="recState" class="rec-state">Enregistrement…</span>
+            <span class="spacer"></span>
+            <button type="button" id="recPause" class="btn ghost small">Pause</button>
+            <button type="button" id="recStop" class="btn primary small">Arrêter</button>
+          </div>
+          <p id="recWarn" class="hint rec-warn" hidden>📱 Gardez le téléphone déverrouillé, l’appli à l’écran : sinon le micro s’arrête.</p>
+          <div id="recDone" class="rec-done" hidden>
+            <audio id="recAudio" controls preload="metadata"></audio>
+            <button type="button" id="recDelete" class="btn ghost small">Supprimer</button>
+          </div>
+          <p id="recHint" class="hint"></p>
+          <div id="recRecover" class="rec-recover" hidden></div>
+        </div>
+      </div>
+
+      <div class="cr-section">
+        <div class="cr-label">Résultat</div>
+        <div class="seg wrap" role="radiogroup" aria-label="Résultat">
+          <label><input type="radio" name="resultat" value="commande"><span>Commande passée</span></label>
+          <label><input type="radio" name="resultat" value="devis"><span>Devis à envoyer</span></label>
+          <label><input type="radio" name="resultat" value="relance"><span>À relancer</span></label>
+          <label><input type="radio" name="resultat" value="absent"><span>Client absent / annulé</span></label>
+        </div>
+      </div>
+
+      <div class="cr-section">
+        <label class="cr-label" for="crNotes">Notes</label>
+        <textarea id="crNotes" name="notes" rows="4" class="dlg-input" placeholder="Ce qui a été dit, les prochaines étapes… (🎤 du clavier pour dicter)"></textarea>
+      </div>
+
+      <div class="cr-section">
+        <label class="cr-label" for="crRelance">Relance le (facultatif)</label>
+        <input id="crRelance" name="relance_le" type="date" class="dlg-input">
+      </div>
+
+      <div class="dialog-actions">
+        <button type="button" class="btn ghost" id="crCancel">Annuler</button>
+        <button type="submit" class="btn primary" id="crSave">Enregistrer</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Tournées enregistrées et historique -->
+  <dialog id="toursDialog" class="panel-dlg">
+    <div class="dlg-body">
+      <div class="dlg-grab"></div>
+      <h2>Tournées</h2>
+      <div class="imp-section">Enregistrées</div>
+      <ul id="toursSaved" class="pick-list"></ul>
+      <div class="imp-section">Faites récemment</div>
+      <ul id="toursDone" class="pick-list"></ul>
+      <div class="dialog-actions"><button class="btn ghost" data-close>Fermer</button></div>
+    </div>
+  </dialog>
+
+  <!-- Mes comptes rendus -->
+  <dialog id="reportsDialog" class="panel-dlg wide">
+    <div class="dlg-body">
+      <div class="dlg-grab"></div>
+      <h2>Mes comptes rendus</h2>
+      <div class="seg small" role="radiogroup" aria-label="Période">
+        <label><input type="radio" name="periode" value="7" checked><span>7 derniers jours</span></label>
+        <label><input type="radio" name="periode" value="30"><span>30 jours</span></label>
+        <label class="admin-only" hidden><input type="radio" name="periode" value="equipe"><span>Toute l’équipe (7 j)</span></label>
+      </div>
+      <ul id="reportsList" class="pick-list cr-list"></ul>
+      <div class="imp-section">À revoir</div>
+      <p class="hint">Vos clients sans visite ni appel depuis plus de 30 jours.</p>
+      <ul id="staleList" class="pick-list"></ul>
+      <div class="dialog-actions">
+        <button class="btn ghost" data-close>Fermer</button>
+        <button id="reportsExport" class="btn primary">Exporter (CSV)</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Autres actions de la fiche client (bouton « … ») -->
+  <dialog id="moreDialog" class="panel-dlg">
+    <div class="dlg-body">
+      <div class="dlg-grab"></div>
+      <h2 id="moreTitle">Autres actions</h2>
+      <ul id="moreList" class="pick-list action-list"></ul>
+      <div class="dialog-actions"><button class="btn ghost" data-close>Fermer</button></div>
+    </div>
+  </dialog>
 
   <!-- Lier à HubSpot -->
   <dialog id="hsDialog" class="panel-dlg">

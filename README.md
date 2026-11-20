@@ -8,12 +8,17 @@ Web app (installable sur mobile) qui affiche la **base clients commune de l'équ
 - **Favoris personnels** : chacun marque ses clients d'une étoile et peut n'afficher que ses favoris.
 - **HubSpot** : chaque client peut être relié à sa fiche HubSpot. La fiche affiche alors des champs du CRM, choisis par l'administrateur, avec un lien « Ouvrir dans HubSpot ».
 - **Temps de trajet A → B** entre deux clients, ou depuis sa position : durée, distance, heure d'arrivée et tracé sur la carte. Calcul par le service d'itinéraire de l'IGN, temps hors trafic.
-- **Position en direct**, choix du rayon (1 à 100 km), liste triée par distance, itinéraire Google Maps ou Waze, appel, e-mail.
+- **Position en direct**, choix du rayon (1 à 100 km), liste triée par distance. Fiche client avec 3 gros boutons : **Itinéraire** (Waze par défaut, Google Maps au choix, choix mémorisé), **Appeler**, **Plus** (temps de trajet, autre appli GPS, e-mail).
+- **Fluide sur le terrain** : l'appli s'ouvre tout de suite depuis le téléphone (mise à jour en arrière-plan), la liste se met à jour au plus toutes les 10 s en roulant, et seules les fiches modifiées par un collègue sont redessinées. Les adresses sans position sont localisées automatiquement.
 - **Import depuis un ERP** (CSV ou Excel) avec correspondance des colonnes, mise à jour par code client et géocodage par lot. Export CSV.
 - **Corbeille** : supprimer un client le met à la corbeille (bouton « Annuler » immédiat). Tout collaborateur peut restaurer ; seul un admin supprime définitivement.
 - **Secteurs** : chaque client peut avoir un commercial attitré. Filtre « Mes clients » ; l'admin attribue les clients et filtre par commercial ; un commercial peut prendre un client libre ou rendre les siens.
+- **Comptes rendus de visite** : bouton « Compte rendu » sur chaque fiche (visite ou appel, résultat, notes, date de relance). Le compte rendu est rattaché au **rendez-vous planifié dans HubSpot** (le plus proche de maintenant est proposé ; sinon un rendez-vous est créé) et écrit dans ses notes. Historique des visites sur la fiche, « vu il y a … » dans la liste, menu ☰ → **Mes comptes rendus** (semaine, clients à revoir depuis 30 jours, export CSV pour les admins).
+- **Enregistrement du rendez-vous** : bouton 🎙 dans le compte rendu, **uniquement après avoir coché « Le client a accepté d'être enregistré »** (l'heure de cet accord est conservée). Le son est joint au rendez-vous HubSpot (fichier privé, écoutable par toute l'équipe depuis l'appli ou HubSpot, **supprimé automatiquement après 6 mois**). Pendant l'enregistrement, l'écran reste allumé et le son est sauvegardé sur le téléphone toutes les 5 s : un enregistrement interrompu est proposé à la réouverture. Sans réseau, l'envoi part tout seul au retour du réseau.
+  - ⚠️ Le téléphone doit rester **déverrouillé, l'appli à l'écran** : sinon le téléphone coupe le micro (limite des applis web, surtout sur iPhone). Compter ~14 Mo par heure.
+- **Tournées** : fiche client → **Plus** → **Ajouter à ma tournée** (25 étapes maximum). Menu ☰ → **Ma tournée** : trajet complet sur la carte, km et temps de chaque tronçon (IGN, hors trafic), heure d'arrivée à la dernière étape, bouton **Optimiser** (ordre le plus court depuis votre position), ordre modifiable à la main. **Démarrer** passe en mode tournée : étape en cours avec Itinéraire, Appeler, Compte rendu, puis « Faite · suivante » ou « Passer ». Les tournées peuvent être **enregistrées** pour être réutilisées (« Tournée du mardi ») ; les tournées terminées sont gardées dans l'historique. Chacun ne voit que ses tournées (l'admin voit celles de l'équipe).
 - **Historique** : chaque création, modification, suppression et restauration est enregistrée (qui, quand, ancienne et nouvelle valeur), consultable sur la fiche.
-- **Administration** (menu ☰) : gérer les collaborateurs, exporter la base, choisir les champs HubSpot affichés, vider la base.
+- **Administration** (menu ☰ → **Gérer la base clients**) : gérer les collaborateurs, choisir les champs HubSpot affichés, exporter la base, vider la base. Le menu principal ne garde que l'usage quotidien.
 
 ## Architecture
 | Élément | Rôle |
@@ -24,9 +29,12 @@ Web app (installable sur mobile) qui affiche la **base clients commune de l'équ
 | `js/geo.js` | Services IGN : géocodage des adresses (unitaire et par lot), itinéraires |
 | `js/importer.js` | Import ERP : lecture CSV ou Excel, reconnaissance des colonnes, préparation |
 | `js/icons.js` | Icônes |
+| `js/tournee.js` | Tournées : ordre de visite optimisé, durée de chaque tronçon |
+| `js/enregistreur.js` | Enregistrement audio des rendez-vous, sauvegarde sur le téléphone et file d'envoi |
 | `config.js` | Adresse du projet Supabase et clé publique « anon » |
 | `supabase/migrations/` | Tables, règles de sécurité, temps réel, import ERP |
 | `supabase/functions/hubspot/` | Passerelle sécurisée vers HubSpot (le jeton HubSpot reste sur le serveur) |
+| `supabase/functions/rdv/` | Rendez-vous HubSpot : liste, compte rendu dans le rendez-vous, enregistrement joint, lien d'écoute |
 | `supabase/functions/inviter/` | Envoi des invitations (réservé aux admins ; la clé secrète reste sur le serveur) |
 
 ## Sécurité
@@ -46,6 +54,7 @@ Règles d'accès (**Row Level Security**, activée sur toutes les tables) :
 - Les favoris sont visibles par leur seul propriétaire.
 - Seuls l'auteur d'un client ou un admin peuvent le supprimer.
 - Seuls les admins gèrent les collaborateurs et les champs CRM.
+- Comptes rendus : lisibles par toute l'équipe ; modifiables et supprimables par leur auteur ou un admin ; l'auteur et l'accord du client ne peuvent pas être falsifiés. Un enregistrement ne peut être déposé que pour son propre compte rendu, et seulement si l'accord du client a été confirmé (`008_comptes_rendus.sql`).
 
 ## Installation (une seule fois, environ 20 minutes)
 
@@ -56,7 +65,7 @@ Règles d'accès (**Row Level Security**, activée sur toutes les tables) :
 
 ### 2. Créer les tables
 1. Dans Supabase, ouvrez **SQL Editor → New query**.
-2. Collez le contenu de `supabase/migrations/001_init.sql` et cliquez sur **Run**. Recommencez avec `002_import_erp.sql`, puis `003_historique_corbeille.sql`, `004_secteurs.sql`, `005_verrou_anon.sql`, `006_double_verification_admin.sql` et `007_etat_compte.sql`.
+2. Collez le contenu de `supabase/migrations/001_init.sql` et cliquez sur **Run**. Recommencez avec `002_import_erp.sql`, puis `003_historique_corbeille.sql`, `004_secteurs.sql`, `005_verrou_anon.sql`, `006_double_verification_admin.sql`, `007_etat_compte.sql`, `008_comptes_rendus.sql` et `009_tournees.sql`.
 3. Déclarez-vous administrateur. Dans une nouvelle requête, avec **votre** adresse :
    ```sql
    insert into public.members (email, role) values ('prenom.nom@societe.fr', 'admin');
@@ -89,14 +98,15 @@ La clé « anon » est faite pour être publique. Ne mettez **jamais** la clé *
    - Collez le contenu de `supabase/functions/hubspot/index.ts`, puis **Deploy**.
    - Faites de même pour la fonction `inviter` (`supabase/functions/inviter/index.ts`), indispensable pour inviter les collaborateurs.
 3. Dans **Edge Functions → Secrets**, ajoutez `HUBSPOT_TOKEN` avec le jeton copié.
+   - **Comptes rendus et enregistrements** : ajoutez aussi les scopes `crm.objects.contacts.read`, `crm.objects.contacts.write` (rendez-vous) et `files` (enregistrements) à l'application privée, puis déployez la fonction `rdv` (`supabase/functions/rdv/index.ts` **et** `supabase/functions/rdv/logique.mjs`, dans le même dossier). Elle utilise le même secret `HUBSPOT_TOKEN`.
    - Les clients sont liés aux **entreprises** HubSpot par défaut. Pour les lier aux **contacts**, ajoutez aussi le secret `HUBSPOT_OBJECT` = `contacts`, et les scopes `crm.objects.contacts.read` et `crm.schemas.contacts.read`.
 
 ### 6. Mettre en ligne et inviter l'équipe
 1. Publiez (fusion dans `main` → GitHub Pages).
 2. **Désactivez les inscriptions** : Supabase → *Authentication → Sign In / Providers* → décochez **Allow new users to sign up**.
 3. **Premier administrateur** : Supabase → *Authentication → Users → Invite user* avec votre adresse (déjà déclarée admin à l'étape 2 de l'installation). Suivez le lien reçu pour choisir votre mot de passe.
-4. Menu ☰ → **Collaborateurs** : saisissez l'adresse d'un collègue et cliquez sur **Inviter**. Il reçoit un e-mail pour choisir son mot de passe. Le bouton ✉ renvoie l'invitation si besoin.
-4. Menu ☰ → **Champs HubSpot affichés** : cochez les informations du CRM à montrer sur les fiches.
+4. Menu ☰ → **Gérer la base clients** → **Collaborateurs** : saisissez l'adresse d'un collègue et cliquez sur **Inviter**. Il reçoit un e-mail pour choisir son mot de passe. Le bouton ✉ renvoie l'invitation si besoin.
+4. Menu ☰ → **Gérer la base clients** → **Champs HubSpot affichés** : cochez les informations du CRM à montrer sur les fiches.
 
 ## Sauvegardes
 Chaque nuit, GitHub sauvegarde la base Supabase (workflow « Sauvegarde quotidienne »). Les données de l'appli et les comptes des collaborateurs sont **chiffrés** et conservés **30 jours** (onglet **Actions** → une exécution → **Artifacts**). La même tâche garde la base active : l'offre gratuite de Supabase la met en pause après 7 jours sans activité.
@@ -118,7 +128,7 @@ bash outils/restaurer.sh sauvegarde-AAAA-MM-JJ.tar.gz.gpg "CHAÎNE_DE_CONNEXION"
 Le script demande la phrase secrète, affiche le contenu, puis demande confirmation avant de **remplacer** les données de l'appli. Si le projet Supabase a été recréé, il restaure aussi les comptes. Il nécessite PostgreSQL 17 et `gpg`. Ce scénario est vérifié par les tests automatiques (`tests/db/sauvegarde.sh`).
 
 ## Importer la base clients (ERP, CSV, Excel)
-Menu ☰ → **Importer un fichier**. Formats acceptés :
+Menu ☰ → **Gérer la base clients** → **Importer un fichier**. Formats acceptés :
 - **CSV**, séparé par `;` ou `,`. L'encodage UTF-8 ou Windows est détecté automatiquement.
 - **Excel** (`.xlsx`, `.xls`) : la première feuille est lue.
 

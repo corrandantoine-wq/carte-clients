@@ -6,9 +6,10 @@ const client = (id, nom, ville, lat, lng) => ({ id, nom, adresse: '', code_posta
 test('trajet A → B depuis la fiche, inversion et retour', async ({ page }) => {
   await seed(page, { clients: [client('a', 'Client Paris', 'Paris', 48.8566, 2.3522), client('b', 'Client Versailles', 'Versailles', 48.8049, 2.1204)] });
   await login(page);
-  await page.click('.chip[data-r="0"]');
+  await page.selectOption('#radiusSel', '0');
   await page.click('#list li[data-id="a"]');
-  await page.click('[data-act=route]');
+  await page.click('[data-act=more]');
+  await page.click('[data-more=route]');
   await expect(page.locator('#rA')).toHaveValue('Client Paris');
   await expect(page.locator('#rB')).toBeFocused();
   await page.fill('#rB', 'versail');
