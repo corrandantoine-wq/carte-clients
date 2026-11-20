@@ -147,7 +147,7 @@ test('mes comptes rendus : liste de la semaine, clients à revoir, export réser
   await page.click('[data-action=reports]');
   await expect(page.locator('#reportsList li[data-client]')).toHaveCount(1);
   await expect(page.locator('#reportsList')).toContainText('Commande passée');
-  await expect(page.locator('#staleList li[data-client]')).toHaveText([/Jamais vu.*jamais vu/, /Vu il y a longtemps.*vu il y a 45 j/]);
+  await expect(page.locator('#staleList li[data-client]')).toHaveText([/Jamais vu[\s\S]*jamais vu/, /Vu il y a longtemps[\s\S]*vu il y a 45 j/]);
   await expect(page.locator('#reportsExport')).toBeHidden();
   await page.click('#staleList li[data-client="b"]');
   await expect(page.locator('#detail h2')).toHaveText('Jamais vu');
