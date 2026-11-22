@@ -44,6 +44,9 @@ test('collaborateurs : l’adresse e-mail complète n’est jamais cachée par l
   await page.click('#userBtn');
   await page.click('[data-action=manage]');
   await page.click('[data-action=members]');
+  // Mesurer seulement une fois l'animation d'ouverture terminée.
+  await page.locator(`#membersList li[data-email="${LONG}"]`).waitFor();
+  await page.waitForFunction(() => document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).every(a => a.playState !== 'running'));
   for (const email of ['bob@soc.fr', LONG]) {
     const li = page.locator(`#membersList li[data-email="${email}"]`);
     const t = await li.locator('.t').boundingBox(), sel = await li.locator('select').boundingBox();

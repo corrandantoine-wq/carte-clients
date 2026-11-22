@@ -99,6 +99,7 @@ import { optimiser, troncons, MAX_ETAPES } from './js/tournee.js';
   // ---------- Carte & fonds ----------
   const map = L.map('map', { zoomControl: false, maxZoom: 19, minZoom: 3 }).setView([46.6, 2.4], 6);
   map.attributionControl.setPrefix(false);
+  if (cfg.demo) window.__map = map; // démo automatique : déplacer la carte comme avec le doigt
   // Fonds de carte de l'IGN (Géoplateforme) : gratuits, sans clé, licence ouverte Etalab.
   // Le mode sombre du plan est obtenu par un filtre CSS.
   const ign = (layer, format, opts = {}) => L.tileLayer(
@@ -1889,7 +1890,8 @@ import { optimiser, troncons, MAX_ETAPES } from './js/tournee.js';
       if (msg) return toast(`Invitation non envoyée : ${msg}`, 6000);
       toast((INVITE_MSG[data.status] || INVITE_MSG['invité'])(email), 5000);
     } catch (e) { toast(`Invitation non envoyée : ${e.message || e}`, 6000); }
-    finally { invitesInFlight.delete(email); }
+    // Reste bloqué 3 s après la réponse : un double appui ne renvoie pas un second e-mail.
+    finally { setTimeout(() => invitesInFlight.delete(email), 3000); }
   }
   $('#membersList').addEventListener('change', async e => {
     const sel = e.target.closest('[data-role]'); if (!sel) return;

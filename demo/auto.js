@@ -2,6 +2,16 @@
 // Ouvrir /demo/#auto, lancer l'enregistrement de l'écran, puis toucher « Lancer la démo ».
 (() => {
   const $ = s => document.querySelector(s);
+  // Micro simulé, installé ici (dans la page finale) : sur iPhone, celui posé avant le chargement
+  // de l'appli est perdu, d'où la fenêtre « souhaite accéder au micro ». Le son n'est pas utile à la vidéo.
+  const fauxMicro = async () => {
+    if (!window.__autoAudio) window.__autoAudio = new AudioContext();
+    const ctx = window.__autoAudio, dest = ctx.createMediaStreamDestination(), osc = ctx.createOscillator(), g = ctx.createGain();
+    g.gain.value = 0.0001; osc.connect(g); g.connect(dest); osc.start();
+    return dest.stream;
+  };
+  try { MediaDevices.prototype.getUserMedia = fauxMicro; } catch {}
+  try { Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: fauxMicro, configurable: true, writable: true }); } catch {}
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const css = document.createElement('style');
   css.textContent = `
@@ -18,6 +28,29 @@
     .auto-end b{display:block;font:800 40px system-ui;margin-bottom:10px} .auto-end span{font:500 20px system-ui;opacity:.85}`;
   document.head.appendChild(css);
   const finger = document.createElement('div'); finger.className = 'auto-finger'; document.body.appendChild(finger);
+  const finger2 = document.createElement('div'); finger2.className = 'auto-finger'; document.body.appendChild(finger2);
+  const place = (f, x, y, ms = 0) => { f.style.transition = ms ? `transform ${ms}ms linear, opacity .25s` : 'opacity .25s'; f.style.transform = `translate(${x}px, ${y}px)`; };
+  const restore = () => { finger.style.transition = ''; };
+  // Glisser la carte avec le doigt : le doigt et la carte bougent ensemble.
+  async function drag(dx, dy, ms = 1100) {
+    const m = window.__map; if (!m) return;
+    const x = innerWidth / 2 - dx / 2, y = innerHeight * 0.3 - dy / 2;
+    place(finger, x, y); await sleep(30); finger.style.opacity = 1; await sleep(300);
+    place(finger, x + dx, y + dy, ms);
+    m.panBy([-dx, -dy], { duration: ms / 1000, easeLinearity: 1 });
+    await sleep(ms + 150); finger.style.opacity = 0; await sleep(300); restore();
+  }
+  // Pincer pour dézoomer (ou écarter pour zoomer) : deux doigts.
+  async function pinch(zoom, ms = 1300) {
+    const m = window.__map; if (!m) return;
+    const cx = innerWidth / 2, cy = innerHeight * 0.3, a = zoom < 0 ? 90 : 25, b = zoom < 0 ? 25 : 90;
+    place(finger, cx - a, cy - a * 0.6); place(finger2, cx + a, cy + a * 0.6);
+    await sleep(30); finger.style.opacity = finger2.style.opacity = 1; await sleep(300);
+    place(finger, cx - b, cy - b * 0.6, ms); place(finger2, cx + b, cy + b * 0.6, ms);
+    const p = m.containerPointToLatLng([cx, cy]);
+    m.flyTo(p, m.getZoom() + zoom, { duration: ms / 1000 });
+    await sleep(ms + 200); finger.style.opacity = finger2.style.opacity = 0; await sleep(300); restore(); finger2.style.transition = '';
+  }
 
   async function waitFor(sel, ms = 8000) {
     const end = Date.now() + ms;
@@ -62,34 +95,42 @@
   const hideFinger = () => { finger.style.opacity = 0; };
 
   async function play() {
-    // Scène 1 (0 – 6 s) : la carte, sans rien toucher.
-    await sleep(5500);
-    // Scène 2 (6 – 16 s) : rayon 25 km, la liste avec « vu il y a ».
-    await choose('#radiusSel', '25', 1500);
+    // Scène 1 (0 – 15 s) : la carte, puis on la parcourt au doigt pour voir les clients autour.
+    await sleep(2000);
+    await pinch(1);              // zoomer : les clients se détachent un par un
+    await sleep(800);
+    await drag(-80, 35);         // glisser vers l'est
+    await sleep(500);
+    await drag(110, -60);        // puis vers l'ouest
+    await sleep(500);
+    await drag(-30, 25);         // retour au centre
+    await sleep(400);
+    await pinch(-1);             // dézoomer : vue d'ensemble autour de soi
+    await sleep(700);
+    // Scène 2 (15 – 21 s) : rayon 25 km, la liste avec « vu il y a ».
+    await choose('#radiusSel', '25', 1000);
     hideFinger();
-    await scrollList(260); await sleep(1500); await scrollList(-260); await sleep(1200);
-    // Scène 3 (16 – 32 s) : la tournée du mardi, optimisée.
-    await tap('#menuBtn', 900);
-    await tap('[data-action=tour]', 1000);
-    await tap('#toursBtn', 1100);
-    await tap('#toursSaved li[data-t]', 2200);
-    hideFinger(); await sleep(1500);
-    await tap('[data-tour=optim]', 3500);
-    hideFinger(); await sleep(1500);
-    // Scène 4 (32 – 50 s) : démarrer, compte rendu avec enregistrement.
-    await tap('[data-tour=start]', 1200);
-    await tap('[data-tour=cr]', 1800);
-    await tap('#recConsent', 800);
-    await tap('#recStart', 600);
-    hideFinger(); await sleep(3200);
-    await tap('#recStop', 1000);
-    await tap(byText('#crForm .seg span', 'Commande passée'), 700);
+    await scrollList(240); await sleep(700); await scrollList(-240);
+    // Scène 3 (21 – 30 s) : la tournée du mardi, optimisée.
+    await tap('#menuBtn', 500);
+    await tap('[data-action=tour]', 600);
+    await tap('#toursBtn', 600);
+    await tap('#toursSaved li[data-t]', 1200);
+    await tap('[data-tour=optim]', 2000);
+    // Scène 4 (30 – 47 s) : démarrer, compte rendu avec enregistrement.
+    await tap('[data-tour=start]', 900);
+    await tap('[data-tour=cr]', 1500);
+    await tap('#recConsent', 700);
+    await tap('#recStart', 500);
+    hideFinger(); await sleep(3000);
+    await tap('#recStop', 900);
+    await tap(byText('#crForm .seg span', 'Commande passée'), 600);
     await type('#crNotes', '12 cartons, livraison mardi');
-    await tap('#crSave', 1800);
-    // Scène 5 (50 – 55 s) : étape suivante.
-    await tap('[data-tour=next]', 2500);
-    hideFinger(); await sleep(1500);
-    // Fin (55 – 60 s).
+    await tap('#crSave', 1600);
+    // Scène 5 (47 – 52 s) : étape suivante.
+    await tap('[data-tour=next]', 2300);
+    hideFinger(); await sleep(1000);
+    // Fin.
     const end = document.createElement('div'); end.className = 'auto-end';
     end.innerHTML = '<div><b>Carte Clients</b><span>Essai gratuit 30 jours</span></div>';
     document.body.appendChild(end); await sleep(50); end.style.opacity = 1;
