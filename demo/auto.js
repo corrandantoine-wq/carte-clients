@@ -2,6 +2,16 @@
 // Ouvrir /demo/#auto, lancer l'enregistrement de l'écran, puis toucher « Lancer la démo ».
 (() => {
   const $ = s => document.querySelector(s);
+  // Micro simulé, installé ici (dans la page finale) : sur iPhone, celui posé avant le chargement
+  // de l'appli est perdu, d'où la fenêtre « souhaite accéder au micro ». Le son n'est pas utile à la vidéo.
+  const fauxMicro = async () => {
+    if (!window.__autoAudio) window.__autoAudio = new AudioContext();
+    const ctx = window.__autoAudio, dest = ctx.createMediaStreamDestination(), osc = ctx.createOscillator(), g = ctx.createGain();
+    g.gain.value = 0.0001; osc.connect(g); g.connect(dest); osc.start();
+    return dest.stream;
+  };
+  try { MediaDevices.prototype.getUserMedia = fauxMicro; } catch {}
+  try { Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: fauxMicro, configurable: true, writable: true }); } catch {}
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const css = document.createElement('style');
   css.textContent = `
