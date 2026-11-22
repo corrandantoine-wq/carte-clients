@@ -99,6 +99,7 @@ import { optimiser, troncons, MAX_ETAPES } from './js/tournee.js';
   // ---------- Carte & fonds ----------
   const map = L.map('map', { zoomControl: false, maxZoom: 19, minZoom: 3 }).setView([46.6, 2.4], 6);
   map.attributionControl.setPrefix(false);
+  if (cfg.demo) window.__map = map; // démo automatique : déplacer la carte comme avec le doigt
   // Fonds de carte de l'IGN (Géoplateforme) : gratuits, sans clé, licence ouverte Etalab.
   // Le mode sombre du plan est obtenu par un filtre CSS.
   const ign = (layer, format, opts = {}) => L.tileLayer(
