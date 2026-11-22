@@ -95,16 +95,24 @@
     document.body.appendChild(end); await sleep(50); end.style.opacity = 1;
   }
 
+  function alerte(txt) {
+    const d = document.createElement('div'); d.className = 'auto-cover';
+    d.innerHTML = '<div>' + txt.replace(/</g, '&lt;') + '<small>Fermez complètement la démo puis rouvrez-la.</small></div>';
+    d.addEventListener('click', () => d.remove()); document.body.appendChild(d);
+  }
   // Écran de départ : le temps de lancer l'enregistrement de l'écran.
   (async () => {
-    await waitFor(() => $('#auth')?.hidden && $('#list li[data-id]'), 20000);
+    try { await waitFor(() => $('#auth')?.hidden && $('#list li[data-id]'), 25000); }
+    catch { alerte('La démo n’a pas fini de se charger.'); return; }
     const cover = document.createElement('div'); cover.className = 'auto-cover';
     cover.innerHTML = '<div>Démo automatique prête<small>1. Lancez l’enregistrement de l’écran.<br>2. Touchez le bouton, puis ne touchez plus rien pendant 1 minute.</small><button type="button">▶ Lancer la démo</button></div>';
     document.body.appendChild(cover);
     cover.querySelector('button').addEventListener('click', async () => {
+      // Son simulé démarré pendant le vrai toucher : sinon l'iPhone le laisse en pause.
+      try { window.__autoAudio = window.__autoAudio || new AudioContext(); window.__autoAudio.resume(); } catch {}
       for (const n of [3, 2, 1]) { cover.innerHTML = `<div class="auto-count">${n}</div>`; await sleep(1000); }
       cover.remove();
-      try { await play(); } catch (e) { hideFinger(); console.warn('Démo automatique interrompue :', e.message); }
+      try { await play(); } catch (e) { hideFinger(); alerte('La démo s’est arrêtée : ' + e.message); }
     }, { once: true });
   })();
 })();

@@ -29,9 +29,11 @@
   if (auto) {
     // Micro simulé : pas de fenêtre d'autorisation pendant le tournage (le son n'est pas utile à la vidéo).
     try {
+      // Le son est préparé au toucher de « Lancer la démo » (l'iPhone l'exige) : voir demo/auto.js.
       navigator.mediaDevices.getUserMedia = async () => {
-        const ctx = new AudioContext(), dest = ctx.createMediaStreamDestination(), osc = ctx.createOscillator(), g = ctx.createGain();
-        g.gain.value = 0; osc.connect(g); g.connect(dest); osc.start(); await ctx.resume().catch(() => {});
+        if (!window.__autoAudio) window.__autoAudio = new AudioContext();
+        const ctx = window.__autoAudio, dest = ctx.createMediaStreamDestination(), osc = ctx.createOscillator(), g = ctx.createGain();
+        g.gain.value = 0.0001; osc.connect(g); g.connect(dest); osc.start();
         return dest.stream;
       };
     } catch {}
@@ -62,7 +64,7 @@
       f.querySelector('[name=email]').value = window.__DEMO__.email;
       f.querySelector('[name=password]').value = window.__DEMO__.password;
       document.querySelector('#authSubmit').click();
-      if (auto) { const sc = document.createElement('script'); sc.src = 'demo/auto.js'; document.body.appendChild(sc); }
+      if (auto) { const sc = document.createElement('script'); sc.src = 'demo/auto.js?v=' + Date.now(); document.body.appendChild(sc); }
     }, 700);
   }, 200);
 })();
