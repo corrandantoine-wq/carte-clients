@@ -1890,7 +1890,8 @@ import { optimiser, troncons, MAX_ETAPES } from './js/tournee.js';
       if (msg) return toast(`Invitation non envoyée : ${msg}`, 6000);
       toast((INVITE_MSG[data.status] || INVITE_MSG['invité'])(email), 5000);
     } catch (e) { toast(`Invitation non envoyée : ${e.message || e}`, 6000); }
-    finally { invitesInFlight.delete(email); }
+    // Reste bloqué 3 s après la réponse : un double appui ne renvoie pas un second e-mail.
+    finally { setTimeout(() => invitesInFlight.delete(email), 3000); }
   }
   $('#membersList').addEventListener('change', async e => {
     const sel = e.target.closest('[data-role]'); if (!sel) return;
