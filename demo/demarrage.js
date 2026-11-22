@@ -25,7 +25,7 @@
   } catch {}
 
   // Mode automatique (adresse terminée par #auto) : la démo se joue toute seule, pour la filmer.
-  const auto = location.hash === '#auto';
+  const auto = location.hash === '#auto' || new URLSearchParams(location.search).has('auto');
   if (auto) {
     // Micro simulé : pas de fenêtre d'autorisation pendant le tournage (le son n'est pas utile à la vidéo).
     try {
@@ -40,6 +40,9 @@
   let html = await (await fetch('../index.html', { cache: 'no-store' })).text();
   html = html
     .replace('<head>', '<head><base href="../">')
+    // Icône d'écran d'accueil propre à la démo (sinon elle ouvrirait la vraie appli).
+    .replace('href="manifest.webmanifest"', 'href="demo/demo.webmanifest"')
+    .replace('<meta name="apple-mobile-web-app-capable"', '<meta name="apple-mobile-web-app-title" content="Démo Clients"><meta name="apple-mobile-web-app-capable"')
     .replace(/<script src="https:\/\/[^"]*supabase-js[^"]*"><\/script>/, '<script src="tests/support/mock-supabase.js"></script>')
     .replace('<script src="config.js"></script>', `<script>window.CARTE_CLIENTS_CONFIG = { supabaseUrl: 'https://demo.invalid', supabaseAnonKey: 'demo', demo: true };<\/script>
       <style>.demo-badge{position:fixed;left:12px;bottom:calc(env(safe-area-inset-bottom) + 8px);z-index:3000;background:#7c3aed;color:#fff;font:600 12px system-ui;padding:6px 10px;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.25);pointer-events:none}
