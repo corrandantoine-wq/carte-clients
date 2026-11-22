@@ -1,6 +1,6 @@
 // Service worker : met en cache l'interface pour un démarrage rapide.
 // Les données (Supabase, HubSpot, géocodage) ne sont jamais mises en cache ici.
-const CACHE = 'carte-clients-v17';
+const CACHE = 'carte-clients-v18';
 const SHELL = ['./', './index.html', './style.css', './app.js', './js/utils.js', './js/icons.js', './js/geo.js', './js/importer.js', './js/enregistreur.js', './js/tournee.js', './config.js', './manifest.webmanifest', './icon.svg'];
 const STATIC_HOSTS = /unpkg\.com|cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|fonts\.(googleapis|gstatic)\.com/;
 
@@ -18,6 +18,14 @@ self.addEventListener('fetch', e => {
   // Tuiles de carte IGN (/wmts) mises en cache ; géocodage et itinéraires toujours en direct.
   const tile = url.hostname === 'data.geopf.fr' && url.pathname.startsWith('/wmts');
   if (!same && !tile && !STATIC_HOSTS.test(url.hostname)) return; // réseau direct (Supabase, API…)
+  if (same && url.pathname.includes('/demo/')) {
+    // Démo : toujours la dernière version (réseau d'abord), la copie ne sert que hors connexion.
+    e.respondWith(fetch(e.request).then(res => {
+      if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); }
+      return res;
+    }).catch(() => caches.match(e.request)));
+    return;
+  }
   if (same) {
     // Interface : copie du téléphone d'abord (ouverture immédiate, même avec un mauvais réseau),
     // puis mise à jour en arrière-plan pour la prochaine ouverture.
